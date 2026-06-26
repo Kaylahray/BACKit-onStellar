@@ -145,6 +145,12 @@ pub struct ContractConfig {
     /// resolve the call. After this period elapses, stakers can reclaim their
     /// stakes via `claim_expired_refund`. Default: 604800 (7 days).
     pub resolution_grace_period: u64,
+    /// Set of admin addresses for multi-party authorization.
+    /// When empty, falls back to `admin` (single-admin backward compat).
+    pub admin_set: Vec<Address>,
+    /// Minimum number of admin signatures required for sensitive operations.
+    /// Default: 1 (single-admin mode).
+    pub admin_threshold: u32,
 }
 
 /// Contract-wide aggregated statistics for dashboards.

@@ -28,6 +28,7 @@ pub enum DataKey {
     ExpiredRefundClaimed(u64, Address),
     InstanceEntryCount,
     Sep10Domain(Address),
+    Locked,
 }
 
 /// Store contract configuration
@@ -446,4 +447,22 @@ pub fn set_sep10_domain(env: &Env, user: &Address, domain: &Bytes) {
 pub fn get_sep10_domain(env: &Env, user: &Address) -> Option<Bytes> {
     let key = DataKey::Sep10Domain(user.clone());
     env.storage().persistent().get(&key)
+}
+
+/// Returns true if the reentrancy lock is currently held.
+pub fn is_locked(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::Locked)
+        .unwrap_or(false)
+}
+
+/// Acquire the reentrancy lock.
+pub fn acquire_lock(env: &Env) {
+    env.storage().instance().set(&DataKey::Locked, &true);
+}
+
+/// Release the reentrancy lock.
+pub fn release_lock(env: &Env) {
+    env.storage().instance().set(&DataKey::Locked, &false);
 }

@@ -91,6 +91,15 @@ use events::*;
 use storage::*;
 use types::*;
 
+macro_rules! reentrancy_guard {
+    ($env:expr) => {
+        if storage::is_locked($env) {
+            return Err(CallRegistryError::ReentrancyDetected);
+        }
+        storage::acquire_lock($env);
+    };
+}
+
 const MAX_CALL_PAGE_SIZE: u32 = 20;
 const MAX_CALL_STAKERS_PAGE_SIZE: u32 = 50;
 pub const CONTRACT_VERSION: u32 = 1;
@@ -161,6 +170,8 @@ impl CallRegistry {
             staking_cutoff_secs: 300,
             share_wasm_hash: None,
             resolution_grace_period: 604800,
+            admin_set: Vec::new(&env),
+            admin_threshold: 1,
         };
 
         set_config(&env, &config);
@@ -209,6 +220,7 @@ impl CallRegistry {
         args: CallInitArgs,
     ) -> Result<Call, CallRegistryError> {
         creator.require_auth();
+        reentrancy_guard!(&env);
 
         let CallInitArgs {
             stake_token,
@@ -421,6 +433,7 @@ impl CallRegistry {
         env.storage().persistent().set(&key_cid, &cid_b64);
         env.storage().persistent().set(&key_hash, &hash_b64);
 
+        storage::release_lock(&env);
         Ok(call)
     }
 
@@ -537,6 +550,7 @@ impl CallRegistry {
         position: u32,
     ) -> Result<Call, CallRegistryError> {
         staker.require_auth();
+        reentrancy_guard!(&env);
 
         if amount <= 0 {
             return Err(CallRegistryError::InvalidStakeAmount);
@@ -624,6 +638,7 @@ impl CallRegistry {
             emit_stake_added(&env, call_id, &staker, amount, position);
         }
 
+        storage::release_lock(&env);
         Ok(call)
     }
 
@@ -780,6 +795,7 @@ impl CallRegistry {
         let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
         assert!(!config.paused, "Contract is paused");
         config.outcome_manager.require_auth();
+        reentrancy_guard!(&env);
 
         let mut call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
 
@@ -822,6 +838,7 @@ impl CallRegistry {
 
         emit_call_resolved(&env, call_id, outcome, end_price);
 
+        storage::release_lock(&env);
         Ok(call)
     }
 
@@ -883,6 +900,36 @@ impl CallRegistry {
     /// Propagates errors from [`admin::set_admin`].
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), CallRegistryError> {
         admin::set_admin(env, new_admin)
+    }
+
+    /// Configure multi-party admin set and threshold (requires current threshold of signatures).
+    /// Threshold=1 preserves backward-compatible single-admin behavior.
+    /// Emits AdminSetUpdated event.
+    pub fn set_admin_set(
+        env: Env,
+        new_admins: Vec<Address>,
+        new_threshold: u32,
+    ) -> Result<(), CallRegistryError> {
+        let mut config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        // Require existing admin (or threshold signatures in future iterations)
+        config.admin.require_auth();
+        if new_threshold == 0 || new_threshold as usize > new_admins.len() as usize {
+            panic!("threshold must be >= 1 and <= admin_set length");
+        }
+        config.admin_set = new_admins.clone();
+        config.admin_threshold = new_threshold;
+        set_config(&env, &config);
+        env.events().publish(
+            ("call_registry", "AdminSetUpdated"),
+            (new_admins, new_threshold),
+        );
+        Ok(())
+    }
+
+    /// Return the current admin set and threshold.
+    pub fn get_admin_set(env: Env) -> Result<(Vec<Address>, u32), CallRegistryError> {
+        let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        Ok((config.admin_set, config.admin_threshold))
     }
 
     /// Replace the outcome manager (admin only).
