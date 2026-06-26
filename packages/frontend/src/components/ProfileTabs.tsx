@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Call, TabType, User } from '@/types'
 import { truncateAddress } from '@/lib/utils'
 import { Clock, CheckCircle, XCircle, Users } from 'lucide-react'
+import CreatorDashboard from '@/components/CreatorDashboard'
 
 interface ProfileTabsProps {
    createdCalls: Call[]
@@ -19,6 +20,7 @@ interface ProfileTabsProps {
    onFollowToggle: (address: string, isFollowing: boolean) => Promise<void>
    loading?: boolean
    error?: string | null
+   profileAddress?: string
 }
 
 export default function ProfileTabs({
@@ -35,6 +37,7 @@ export default function ProfileTabs({
    onFollowToggle,
    loading = false,
    error = null,
+   profileAddress,
   }: ProfileTabsProps) {
    const [activeTab, setActiveTab] = useState<TabType>('created')
   const [followersPage, setFollowersPage] = useState(1)
@@ -44,6 +47,7 @@ export default function ProfileTabs({
     { id: 'created', label: 'Created Calls', count: createdCalls.length },
     { id: 'participated', label: 'Participated', count: participatedCalls.length },
     { id: 'resolved', label: 'Resolved', count: resolvedCalls.length },
+    { id: 'my-markets', label: 'My Markets', count: 0 },
     { id: 'followers', label: 'Followers', count: followersTotal },
     { id: 'following', label: 'Following', count: followingTotal }
   ]
@@ -179,6 +183,9 @@ export default function ProfileTabs({
       </div>
 
       <div className="p-6">
+        {activeTab === 'my-markets' && (
+          <CreatorDashboard address={profileAddress ?? ''} />
+        )}
         {activeTab === 'followers' && (
           <div className="space-y-4">
 {followers.map((follower) => (

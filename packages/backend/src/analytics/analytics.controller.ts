@@ -139,6 +139,34 @@ export class AnalyticsController {
   ): Promise<TotalValueLockedResponseDto> {
     return this.analyticsService.getTotalValueLocked(userAddress);
   }
+
+  @Get(':address/created-calls')
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(60000)
+  @ApiOperation({ summary: "Get a user's created calls with aggregated stats" })
+  @ApiParam({ name: 'address', description: 'Stellar wallet address' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'status', required: false, description: 'open | resolved | cancelled' })
+  @ApiResponse({ status: 200, description: 'Created calls returned' })
+  getCreatedCalls(
+    @Param('address') address: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
+    @Query('status') status?: string,
+  ) {
+    return this.analyticsService.getCreatedCalls(address, parseInt(page), parseInt(limit), status);
+  }
+
+  @Get(':address/created-calls/stats')
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(60000)
+  @ApiOperation({ summary: "Summary stats for a user's created calls" })
+  @ApiParam({ name: 'address', description: 'Stellar wallet address' })
+  @ApiResponse({ status: 200, description: 'Creator stats returned' })
+  getCreatedCallsStats(@Param('address') address: string) {
+    return this.analyticsService.getCreatedCallsStats(address);
+  }
 }
 
 @ApiTags('Analytics')

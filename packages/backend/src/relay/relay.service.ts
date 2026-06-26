@@ -32,6 +32,68 @@ export class RelayService {
     }
   }
 
+  private xlmPriceCache: { usd: number; expiresAt: number } | null = null;
+
+  private async getXlmUsdPrice(): Promise<number> {
+    if (this.xlmPriceCache && Date.now() < this.xlmPriceCache.expiresAt) {
+      return this.xlmPriceCache.usd;
+    }
+    try {
+      const res = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd',
+      );
+      const json = await res.json();
+      const usd = json?.stellar?.usd ?? 0;
+      this.xlmPriceCache = { usd, expiresAt: Date.now() + 60_000 };
+      return usd;
+    } catch {
+      return this.xlmPriceCache?.usd ?? 0;
+    }
+  }
+
+  async estimateFee(xdrString: string): Promise<{
+    estimatedGasXLM: string;
+    estimatedGasUSD: string;
+    resourceCost: unknown;
+    sponsored: boolean;
+  }> {
+    const networkPassphrase = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
+    let tx: Transaction | FeeBumpTransaction;
+    try {
+      tx = TransactionBuilder.fromXDR(xdrString, networkPassphrase);
+    } catch {
+      throw new BadRequestException('Invalid XDR');
+    }
+
+    const innerTx = tx instanceof FeeBumpTransaction ? tx.innerTransaction : tx;
+
+    let resourceCost: unknown = null;
+    let feeStroops = BigInt(innerTx.fee);
+
+    try {
+      const simResult = await this.rpcServer.simulateTransaction(innerTx as Transaction);
+      if (SorobanRpc.Api.isSimulationSuccess(simResult)) {
+        const minFee = (simResult as any).minResourceFee;
+        if (minFee) feeStroops = BigInt(minFee);
+        resourceCost = (simResult as any).cost ?? null;
+      }
+    } catch {
+      // use tx fee as fallback
+    }
+
+    const feeXlm = (Number(feeStroops) / 1e7).toFixed(7);
+    const usdPrice = await this.getXlmUsdPrice();
+    const feeUsd = (parseFloat(feeXlm) * usdPrice).toFixed(6);
+    const sponsored = !!this.hotWallet;
+
+    return {
+      estimatedGasXLM: feeXlm,
+      estimatedGasUSD: feeUsd,
+      resourceCost,
+      sponsored,
+    };
+  }
+
   async sponsorAndSubmit(xdrString: string): Promise<{ hash: string }> {
     if (!this.hotWallet) {
       throw new BadRequestException(

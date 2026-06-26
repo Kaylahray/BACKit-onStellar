@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CallDetailData } from "@/types";
 import PayoutCalculator from "./PayoutCalculator";
+import GasFeeDisplay from "./GasFeeDisplay";
 
 interface Props {
   call: CallDetailData;
@@ -137,7 +138,11 @@ export default function StakingInterface({ call, onStake, odds }: Props) {
         )}
       </button>
       
-      <p className="mt-6 text-[10px] text-center text-gray-400 font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2">
+      <div className="mt-4 flex justify-center">
+        <GasFeeDisplay />
+      </div>
+
+      <p className="mt-3 text-[10px] text-center text-gray-400 font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2">
          <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
          Soroban Network Smart Contract v1.2.4
       </p>
