@@ -6,13 +6,17 @@ import { Badge, BadgeType } from './entities/badge.entity';
 import { Users } from './entities/users.entity';
 
 // ── Thresholds — tweak without touching logic ──────────────────────────────
-const EARLY_ADOPTER_DAYS = 30; // days from platform launch to qualify
-const WHALE_STAKE_THRESHOLD = 1000; // total XLM staked across all calls
-const HIGH_ACCURACY_MIN_CALLS = 10; // minimum resolved calls to qualify
-const HIGH_ACCURACY_WIN_RATE = 0.7; // 70% win rate required
+const EARLY_ADOPTER_DAYS = 30;
+const WHALE_STAKE_THRESHOLD = 1000;
+const HIGH_ACCURACY_MIN_CALLS = 10;
+const HIGH_ACCURACY_WIN_RATE = 0.7;
 
-// Platform launch date — used to determine early adopter eligibility
 const PLATFORM_LAUNCH = new Date('2024-01-01T00:00:00.000Z');
+
+// Streak thresholds
+const STREAK_THREE = 3;
+const STREAK_FIVE = 5;
+const STREAK_TEN = 10;
 
 @Injectable()
 export class BadgeWorker implements OnApplicationBootstrap {
@@ -39,6 +43,7 @@ export class BadgeWorker implements OnApplicationBootstrap {
       this.assignEarlyAdopterBadge(),
       this.assignWhaleBadge(),
       this.assignHighAccuracyBadge(),
+      this.assignStreakBadges(),
     ]);
     this.logger.log('Badge assignment cron complete');
   }
@@ -61,6 +66,21 @@ export class BadgeWorker implements OnApplicationBootstrap {
         type: BadgeType.HIGH_ACCURACY,
         name: 'High Accuracy',
         description: `Achieved a ${HIGH_ACCURACY_WIN_RATE * 100}% win rate across at least ${HIGH_ACCURACY_MIN_CALLS} resolved calls.`,
+      },
+      {
+        type: BadgeType.STREAK_THREE,
+        name: '3 in a Row',
+        description: 'Won 3 consecutive predictions.',
+      },
+      {
+        type: BadgeType.STREAK_FIVE,
+        name: 'On Fire',
+        description: 'Won 5 consecutive predictions.',
+      },
+      {
+        type: BadgeType.STREAK_TEN,
+        name: 'Unstoppable',
+        description: 'Won 10 consecutive predictions.',
       },
     ];
 
@@ -179,6 +199,40 @@ export class BadgeWorker implements OnApplicationBootstrap {
     this.logger.log(
       `High Accuracy: assigned to ${qualifying.length} new users`,
     );
+  }
+
+  // ── Streak Badges ─────────────────────────────────────────────────────────
+
+  private async assignStreakBadges() {
+    const thresholds: { type: BadgeType; streak: number }[] = [
+      { type: BadgeType.STREAK_THREE, streak: STREAK_THREE },
+      { type: BadgeType.STREAK_FIVE, streak: STREAK_FIVE },
+      { type: BadgeType.STREAK_TEN, streak: STREAK_TEN },
+    ];
+
+    for (const { type, streak } of thresholds) {
+      const badge = await this.badgeRepo.findOne({ where: { type } });
+      if (!badge) continue;
+
+      const qualifying: { id: string }[] = await this.dataSource.query(
+        `
+        SELECT u.id
+        FROM users u
+        WHERE u."bestWinStreak" >= $1
+          AND NOT EXISTS (
+            SELECT 1 FROM user_badges ub
+            WHERE ub."userId" = u.id AND ub."badgeId" = $2
+          )
+        `,
+        [streak, badge.id],
+      );
+
+      await this.bulkAssign(
+        qualifying.map((r) => r.id),
+        badge,
+      );
+      this.logger.log(`Streak ${streak}: assigned to ${qualifying.length} users`);
+    }
   }
 
   // ── Shared bulk-assign (idempotent via NOT EXISTS guard in queries) ────────

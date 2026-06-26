@@ -58,6 +58,13 @@ export default function ProfileHeader({
             <div className="mt-4">
               <BadgeDisplay badges={user.badges} />
             </div>
+            {(user as any).currentWinStreak >= 3 && (
+              <div className={`mt-2 inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-bold ${
+                (user as any).currentWinStreak >= 5 ? 'bg-orange-100 text-orange-700 animate-pulse' : 'bg-yellow-50 text-yellow-700'
+              }`}>
+                🔥 {(user as any).currentWinStreak} Hot Streak!
+              </div>
+            )}
           </div>
         </div>
         

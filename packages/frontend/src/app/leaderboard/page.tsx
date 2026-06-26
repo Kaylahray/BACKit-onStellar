@@ -15,6 +15,7 @@ type LeaderboardRow = {
   winRate: number;
   totalProfit: number;
   reputationScore: number;
+  currentWinStreak?: number;
 };
 
 const periodTabs: Array<{ id: Period; label: string }> = [
@@ -98,6 +99,7 @@ export default function LeaderboardPage() {
                   <th className="px-4 py-3">Win Rate</th>
                   <th className="px-4 py-3">Total Profit</th>
                   <th className="px-4 py-3">Reputation Score</th>
+                  <th className="px-4 py-3">Streak</th>
                 </tr>
               </thead>
               <tbody>
@@ -121,6 +123,11 @@ export default function LeaderboardPage() {
                     <td className="px-4 py-3">{row.winRate.toFixed(1)}%</td>
                     <td className="px-4 py-3">${row.totalProfit.toLocaleString()}</td>
                     <td className="px-4 py-3">{row.reputationScore.toFixed(1)}</td>
+                    <td className="px-4 py-3">
+                      {row.currentWinStreak && row.currentWinStreak >= 3
+                        ? `🔥 ${row.currentWinStreak}`
+                        : row.currentWinStreak ?? '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
