@@ -919,6 +919,130 @@ mod call_registry {
 
     // ── get_call ──────────────────────────────────────────────────────────────
 
+    // -- withdraw_stake -------------------------------------------------------
+    #[test]
+    fn test_withdraw_stake_with_penalty() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let staker = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let call = create_call_with_default_condition(
+            &client, &creator, &stake_token, &100_000_000_i128,
+            &2000u64, &token_address, &pair_id, &metadata_hash, &2,
+        );
+        client.stake_on_call(&staker, &call.id, &50_000_000_i128, &1);
+        let (refund, penalty) = client.withdraw_stake(&staker, &call.id, &1);
+        assert_eq!(penalty, 5_000_000);
+        assert_eq!(refund, 45_000_000);
+        let updated_call = client.get_call(&call.id);
+        assert_eq!(updated_call.outcome_stakes.get(1).unwrap_or(0), 5_000_000);
+    }
+
+    #[test]
+    fn test_withdraw_stake_penalty_calculation_accuracy() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let staker = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let call = create_call_with_default_condition(
+            &client, &creator, &stake_token, &100_000_000_i128,
+            &2000u64, &token_address, &pair_id, &metadata_hash, &2,
+        );
+        client.stake_on_call(&staker, &call.id, &10_000_001_i128, &1);
+        let (refund, penalty) = client.withdraw_stake(&staker, &call.id, &1);
+        // penalty = 10_000_001 * 1000 / 10_000 = 1_000_000 (integer division)
+        assert_eq!(penalty, 1_000_000);
+        assert_eq!(refund, 9_000_001);
+    }
+
+    #[test]
+    #[should_panic(expected = "no stake to withdraw")]
+    fn test_withdraw_nonexistent_stake_panics() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let staker = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let call = create_call_with_default_condition(
+            &client, &creator, &stake_token, &100_000_000_i128,
+            &2000u64, &token_address, &pair_id, &metadata_hash, &2,
+        );
+        client.withdraw_stake(&staker, &call.id, &1);
+    }
+
+    #[test]
+    #[should_panic(expected = "call has ended")]
+    fn test_withdraw_after_call_ends_panics() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let staker = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let call = create_call_with_default_condition(
+            &client, &creator, &stake_token, &100_000_000_i128,
+            &2000u64, &token_address, &pair_id, &metadata_hash, &2,
+        );
+        client.stake_on_call(&staker, &call.id, &50_000_000_i128, &1);
+        env.ledger().set_timestamp(3000);
+        client.withdraw_stake(&staker, &call.id, &1);
+    }
+
+    #[test]
+    fn test_withdraw_stake_pool_rebalancing() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let staker1 = Address::generate(&env);
+        let staker2 = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let call = create_call_with_default_condition(
+            &client, &creator, &stake_token, &100_000_000_i128,
+            &2000u64, &token_address, &pair_id, &metadata_hash, &2,
+        );
+        client.stake_on_call(&staker1, &call.id, &50_000_000_i128, &1);
+        client.stake_on_call(&staker2, &call.id, &30_000_000_i128, &1);
+        let (refund, penalty) = client.withdraw_stake(&staker1, &call.id, &1);
+        assert_eq!(refund, 45_000_000);
+        assert_eq!(penalty, 5_000_000);
+        // remaining = 30_000_000 (staker2) + 5_000_000 (penalty) = 35_000_000
+        let updated_call = client.get_call(&call.id);
+        assert_eq!(updated_call.outcome_stakes.get(1).unwrap_or(0), 35_000_000);
+        let staker2_stake = client.get_staker_stake(&call.id, &staker2, &1);
+        assert_eq!(staker2_stake, 30_000_000);
+    }
+
     #[test]
     fn test_get_call() {
         let (env, admin, outcome_manager, creator) = create_test_env();
