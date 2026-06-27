@@ -42,7 +42,7 @@ export class RelayService {
       const res = await fetch(
         'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd',
       );
-      const json = await res.json();
+      const json = (await res.json()) as Record<string, Record<string, number>>;
       const usd = json?.stellar?.usd ?? 0;
       this.xlmPriceCache = { usd, expiresAt: Date.now() + 60_000 };
       return usd;
@@ -57,7 +57,8 @@ export class RelayService {
     resourceCost: unknown;
     sponsored: boolean;
   }> {
-    const networkPassphrase = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
+    const networkPassphrase =
+      process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
     let tx: Transaction | FeeBumpTransaction;
     try {
       tx = TransactionBuilder.fromXDR(xdrString, networkPassphrase);
@@ -71,11 +72,11 @@ export class RelayService {
     let feeStroops = BigInt(innerTx.fee);
 
     try {
-      const simResult = await this.rpcServer.simulateTransaction(innerTx as Transaction);
+      const simResult = await this.rpcServer.simulateTransaction(innerTx);
       if (SorobanRpc.Api.isSimulationSuccess(simResult)) {
-        const minFee = (simResult as any).minResourceFee;
+        const minFee = simResult.minResourceFee;
         if (minFee) feeStroops = BigInt(minFee);
-        resourceCost = (simResult as any).cost ?? null;
+        resourceCost = simResult.cost ?? null;
       }
     } catch {
       // use tx fee as fallback
@@ -107,7 +108,7 @@ export class RelayService {
 
     try {
       tx = TransactionBuilder.fromXDR(xdrString, networkPassphrase);
-    } catch (error) {
+    } catch {
       throw new BadRequestException('Invalid XDR');
     }
 
@@ -168,8 +169,9 @@ export class RelayService {
       const response = await this.rpcServer.sendTransaction(finalTx);
 
       if (response.status === 'ERROR') {
+        const responseAny = response as Record<string, unknown>;
         const errorMsg =
-          (response as any).errorResultXdr ||
+          (responseAny.errorResultXdr as string | undefined) ||
           (response.errorResult
             ? JSON.stringify(response.errorResult)
             : 'Unknown error');
@@ -181,9 +183,10 @@ export class RelayService {
 
       this.logger.log(`Relayed transaction ${response.hash} for contract call`);
       return { hash: response.hash };
-    } catch (error) {
-      this.logger.error(`Relay submission error: ${error.message}`);
-      throw new BadRequestException(`Submission failed: ${error.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.error(`Relay submission error: ${msg}`);
+      throw new BadRequestException(`Submission failed: ${msg}`);
     }
   }
 
@@ -212,8 +215,11 @@ export class RelayService {
       }
 
       // Cast to the specific operation type to access Soroban-specific fields
-      const hostFunctionOp = op as any;
-      const hostFunction = hostFunctionOp.func as xdr.HostFunction;
+      const hostFunctionOp = op as unknown as {
+        func: xdr.HostFunction;
+        type: string;
+      };
+      const hostFunction = hostFunctionOp.func;
 
       if (!hostFunction) {
         throw new BadRequestException(

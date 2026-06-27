@@ -735,4 +735,55 @@ export class AnalyticsService {
       expiresAt: Date.now() + ttlSeconds * 1000,
     });
   }
+
+  // ─── Created Calls (#432) ─────────────────────────────────────────────────
+
+  async getCreatedCalls(
+    address: string,
+    page: number,
+    limit: number,
+    status?: string,
+  ): Promise<{ calls: Call[]; total: number; page: number; limit: number }> {
+    const query = this.callRepository
+      .createQueryBuilder('call')
+      .where('call.creatorAddress = :address', { address });
+
+    if (status) {
+      query.andWhere('call.status = :status', { status });
+    }
+
+    const total = await query.getCount();
+    const calls = await query
+      .orderBy('call.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return { calls, total, page, limit };
+  }
+
+  async getCreatedCallsStats(address: string): Promise<{
+    totalCalls: number;
+    resolvedCalls: number;
+    pendingCalls: number;
+    totalStakeVolume: number;
+  }> {
+    const stats = await this.callRepository
+      .createQueryBuilder('call')
+      .select('COUNT(*)', 'totalCalls')
+      .addSelect(`COUNT(CASE WHEN call.outcome IN ('YES','NO') THEN 1 END)`, 'resolvedCalls')
+      .addSelect(`COUNT(CASE WHEN call.outcome = 'PENDING' THEN 1 END)`, 'pendingCalls')
+      .addSelect('COALESCE(SUM(call.stakeAmount), 0)', 'totalStakeVolume')
+      .where('call.creatorAddress = :address', { address })
+      .getRawOne();
+
+    const r = stats as Record<string, string>;
+    return {
+      totalCalls: parseInt(r?.totalCalls ?? '0'),
+      resolvedCalls: parseInt(r?.resolvedCalls ?? '0'),
+      pendingCalls: parseInt(r?.pendingCalls ?? '0'),
+      totalStakeVolume: parseFloat(r?.totalStakeVolume ?? '0'),
+    };
+  }
+
 }

@@ -5,7 +5,6 @@ import {
   Query,
   HttpStatus,
   ValidationPipe,
-  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
@@ -147,7 +146,11 @@ export class AnalyticsController {
   @ApiParam({ name: 'address', description: 'Stellar wallet address' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  @ApiQuery({ name: 'status', required: false, description: 'open | resolved | cancelled' })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'open | resolved | cancelled',
+  })
   @ApiResponse({ status: 200, description: 'Created calls returned' })
   getCreatedCalls(
     @Param('address') address: string,
@@ -155,7 +158,12 @@ export class AnalyticsController {
     @Query('limit') limit = '20',
     @Query('status') status?: string,
   ) {
-    return this.analyticsService.getCreatedCalls(address, parseInt(page), parseInt(limit), status);
+    return this.analyticsService.getCreatedCalls(
+      address,
+      parseInt(page),
+      parseInt(limit),
+      status,
+    );
   }
 
   @Get(':address/created-calls/stats')
