@@ -12,8 +12,7 @@ const INSTANCE_BUMP_AMOUNT: u32 = 120_960; // ~7 days
 #[contracttype]
 pub enum DataKey {
     Config,
-    CallCounter,
-    GlobalStats,
+    CallCounter,    GlobalStats,
     GlobalStakerSeen(Address),
     Call(u64),
     CallStakers(u64),
@@ -457,7 +456,7 @@ pub fn is_locked(env: &Env) -> bool {
         .unwrap_or(false)
 }
 
-/// Acquire the reentrancy lock.
+/// Acquire the reentrancy lock. Caller must call `release_lock` before returning.
 pub fn acquire_lock(env: &Env) {
     env.storage().instance().set(&DataKey::Locked, &true);
 }

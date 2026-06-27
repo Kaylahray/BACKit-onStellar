@@ -78,6 +78,7 @@ mod errors;
 mod events;
 #[cfg(test)]
 mod fuzz_tests;
+mod governance;
 mod sep10;
 mod shares;
 mod storage;
@@ -902,8 +903,8 @@ impl CallRegistry {
         admin::set_admin(env, new_admin)
     }
 
-    /// Configure multi-party admin set and threshold (requires current threshold of signatures).
-    /// Threshold=1 preserves backward-compatible single-admin behavior.
+    /// Configure multi-party admin set and threshold (requires current admin signature).
+    /// Threshold=1 is backward-compatible single-admin behavior. Max 10 admins.
     /// Emits AdminSetUpdated event.
     pub fn set_admin_set(
         env: Env,
@@ -932,6 +933,53 @@ impl CallRegistry {
         Ok((config.admin_set, config.admin_threshold))
     }
 
+    // ── On-Chain Governance ──────────────────────────────────────────────────
+
+    /// Create a governance proposal to change a contract parameter.
+    /// Proposer must have at least `proposal_threshold` total stake volume.
+    pub fn propose_change(
+        env: Env,
+        proposer: Address,
+        parameter: Symbol,
+        new_value_bytes: soroban_sdk::Bytes,
+        voting_end_ledger: u32,
+        proposer_stake_volume: i128,
+    ) -> u64 {
+        governance::propose_change(&env, proposer, parameter, new_value_bytes, voting_end_ledger, proposer_stake_volume)
+    }
+
+    /// Cast a vote on a governance proposal. Voting power = voter's stake volume.
+    pub fn governance_vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u64,
+        support: bool,
+        voter_stake_volume: i128,
+    ) {
+        governance::vote(&env, voter, proposal_id, support, voter_stake_volume)
+    }
+
+    /// Execute a passed proposal after the voting period ends.
+    pub fn execute_proposal(env: Env, proposal_id: u64, total_platform_stake: i128) {
+        governance::execute_proposal(&env, proposal_id, total_platform_stake);
+    }
+
+    /// Get a specific proposal by ID.
+    pub fn get_proposal(env: Env, proposal_id: u64) -> governance::GovernanceProposal {
+        governance::get_proposal(&env, proposal_id)
+    }
+
+    /// Get all currently active (open) proposals.
+    pub fn get_active_proposals(env: Env) -> Vec<governance::GovernanceProposal> {
+        governance::get_active_proposals(&env)
+    }
+
+    /// Update governance configuration (admin only).
+    pub fn set_governance_config(env: Env, cfg: governance::GovernanceConfig) -> Result<(), CallRegistryError> {
+        let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        governance::set_governance_config(&env, &config.admin, cfg);
+        Ok(())
+    }
     /// Replace the outcome manager (admin only).
     /// # Errors
     /// Propagates errors from [`admin::set_outcome_manager`].
