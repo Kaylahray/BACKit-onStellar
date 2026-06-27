@@ -38,6 +38,9 @@ export class Stake {
   @Column({ type: 'varchar', length: 255, nullable: true })
   transactionHash?: string;
 
+  @Column({ type: 'varchar', length: 140, nullable: true })
+  comment?: string;
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

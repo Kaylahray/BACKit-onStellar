@@ -108,6 +108,11 @@ export default function ActivityLog({ participants, callId }: Props) {
                     <p className="text-[10px] text-gray-400">{timeAgo(entry.timestamp)}</p>
                   </div>
                 </div>
+                {entry.comment && (
+                  <p className="mt-1.5 ml-9 text-xs text-gray-500 italic leading-snug">
+                    &ldquo;{entry.comment}&rdquo;
+                  </p>
+                )}
               </div>
             );
           })
