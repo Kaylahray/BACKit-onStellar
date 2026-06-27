@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   TrendingUp,
@@ -21,9 +21,100 @@ const fadeUp = {
   show: { opacity: 1, y: 0 },
 };
 
+type PlatformStats = { totalStakeVolume: number; totalCallsCreated: number; totalUniqueUsers: number };
+type TrendingCall = { id: string; title: string; totalYesStake: number; totalNoStake: number; expiresAt: string };
+
+function usePlatformStats() {
+  const [stats, setStats] = useState<PlatformStats | null>(null);
+  useEffect(() => {
+    fetch('/api/analytics/platform')
+      .then(r => r.json())
+      .then(setStats)
+      .catch(() => null);
+  }, []);
+  return stats;
+}
+
+function useTrendingCalls() {
+  const [calls, setCalls] = useState<TrendingCall[]>([]);
+  useEffect(() => {
+    fetch('/api/calls/feed?limit=8&sort=trending')
+      .then(r => r.json())
+      .then(d => setCalls(Array.isArray(d?.data) ? d.data.slice(0, 8) : []))
+      .catch(() => null);
+  }, []);
+  return calls;
+}
+
+function TrendingCarousel({ calls }: { calls: TrendingCall[] }) {
+  const [idx, setIdx] = useState(0);
+  const pausedRef = useRef(false);
+
+  useEffect(() => {
+    if (!calls.length) return;
+    const iv = setInterval(() => {
+      if (!pausedRef.current) setIdx(i => (i + 1) % calls.length);
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [calls.length]);
+
+  if (!calls.length) return null;
+
+  const timeLeft = (expiresAt: string) => {
+    const diff = new Date(expiresAt).getTime() - Date.now();
+    if (diff <= 0) return 'Ended';
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  const visible = calls.slice(idx, idx + 3).concat(idx + 3 > calls.length ? calls.slice(0, (idx + 3) % calls.length) : []);
+
+  return (
+    <div
+      className="overflow-hidden"
+      onMouseEnter={() => { pausedRef.current = true; }}
+      onMouseLeave={() => { pausedRef.current = false; }}
+    >
+      <div className="flex gap-4">
+        {visible.map(call => {
+          const total = (call.totalYesStake ?? 0) + (call.totalNoStake ?? 0);
+          const yesPct = total > 0 ? Math.round((call.totalYesStake / total) * 100) : 50;
+          return (
+            <Link key={call.id} href={`/calls/${call.id}`}
+              className="flex-1 min-w-0 rounded-2xl border border-white/10 bg-[#0d1117] p-4 hover:border-green-400/30 transition-colors">
+              <p className="text-sm font-semibold text-white truncate mb-3">{call.title}</p>
+              <div className="flex h-1.5 rounded-full overflow-hidden mb-2">
+                <div className="bg-green-500 transition-all" style={{ width: `${yesPct}%` }} />
+                <div className="bg-red-500 transition-all" style={{ width: `${100 - yesPct}%` }} />
+              </div>
+              <div className="flex justify-between text-[10px] text-gray-400">
+                <span>UP {yesPct}%</span>
+                <span>{timeLeft(call.expiresAt)}</span>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+      <div className="flex justify-center gap-1.5 mt-3">
+        {calls.map((_, i) => (
+          <button key={i} onClick={() => setIdx(i)}
+            className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-4 bg-green-400' : 'w-1.5 bg-white/20'}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnimatedNumber({ value, prefix = '' }: { value: string; prefix?: string }) {
+  return <span>{prefix}{value}</span>;
+}
+
 export default function HomePage() {
   const [walletConnected, setWalletConnected] = useState(false);
   const { t } = useTranslation();
+  const liveStats = usePlatformStats();
+  const trendingCalls = useTrendingCalls();
 
   const howItWorks = [
     {
@@ -49,11 +140,19 @@ export default function HomePage() {
     },
   ];
 
-  const stats = [
+  const FALLBACK_STATS = [
     { label: "Total Volume", value: "$4.2M" },
     { label: "Active Markets", value: "1,240" },
     { label: "Users", value: "18.4K" },
   ];
+
+  const stats = liveStats
+    ? [
+        { label: "Total Volume", value: `$${(liveStats.totalStakeVolume / 1e6).toFixed(1)}M` },
+        { label: "Active Markets", value: liveStats.totalCallsCreated.toLocaleString() },
+        { label: "Users", value: liveStats.totalUniqueUsers.toLocaleString() },
+      ]
+    : FALLBACK_STATS;
 
   const features = [
     {
@@ -237,6 +336,18 @@ export default function HomePage() {
           </motion.div>
         </motion.div>
       </section>
+
+      {trendingCalls.length > 0 && (
+        <section className="px-6 py-12 bg-white/[0.02]">
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-5 flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-green-400">Trending Now</p>
+            </div>
+            <TrendingCarousel calls={trendingCalls} />
+          </div>
+        </section>
+      )}
 
       <section id="how" className="px-6 py-24">
         <div className="mx-auto max-w-6xl">
