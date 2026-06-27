@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Map};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Map, Vec};
 
 /// Describes the price-movement condition that determines the winning outcome.
 ///
