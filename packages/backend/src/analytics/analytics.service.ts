@@ -242,7 +242,7 @@ export class AnalyticsService {
     // Convert to cumulative values
     let cumulative = 0;
     const dataPoints: ProfitDataPoint[] = (rawData as DailyProfitRow[]).map((row) => {
-      cumulative += parseFloat(row.dailyProfit || 0);
+      cumulative += parseFloat(row.dailyProfit ?? '0');
       return {
         date: new Date(row.date).toISOString().split('T')[0],
         value: Number(cumulative.toFixed(7)), // Stellar precision
@@ -276,7 +276,7 @@ export class AnalyticsService {
     // Convert to cumulative values
     let cumulative = 0;
     const dataPoints: ProfitDataPoint[] = (rawData as WeeklyProfitRow[]).map((row) => {
-      cumulative += parseFloat(row.weeklyProfit || 0);
+      cumulative += parseFloat(row.weeklyProfit ?? '0');
       return {
         date: new Date(row.date).toISOString().split('T')[0],
         value: Number(cumulative.toFixed(7)),
@@ -317,8 +317,8 @@ export class AnalyticsService {
     let totalResolved = 0;
 
     const dataPoints: AccuracyDataPoint[] = (rawData as AccuracyRow[]).map((row) => {
-      totalCorrect += parseInt(row.correct || 0);
-      totalResolved += parseInt(row.total || 0);
+      totalCorrect += parseInt(row.correct ?? '0');
+      totalResolved += parseInt(row.total ?? '0');
 
       const accuracy =
         totalResolved > 0 ? (totalCorrect / totalResolved) * 100 : 0;
