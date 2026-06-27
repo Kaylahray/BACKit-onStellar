@@ -16,6 +16,7 @@ import {
   ArrowDownLeft
 } from 'lucide-react'
 import Link from 'next/link'
+import ActiveAlerts from './ActiveAlerts'
 
 interface StakeCall {
   id: string;
@@ -675,6 +676,7 @@ export default function PortfolioDashboard({ address }: PortfolioDashboardProps)
           )}
         </div>
       </div>
+      <ActiveAlerts walletAddress={address} />
     </div>
   )
 }

@@ -17,7 +17,7 @@ import { QUEUE_ORACLE_SIGNING } from '../common/queues/queues.constants';
 
 @ApiTags('Oracle')
 @Controller('oracle')
-export class OracleController {
+export class OracleSigningController {
   constructor(
     private readonly signingService: OracleSigningService,
     @InjectQueue(QUEUE_ORACLE_SIGNING) private readonly oracleQueue: Queue,
@@ -80,7 +80,7 @@ export class OracleController {
     const status = await job.getState();
     return {
       status,
-      result: job.returnvalue ?? null,
+      result: (job.returnvalue as SignedPriceData | null) ?? null,
       failedReason: job.failedReason ?? null,
     };
   }

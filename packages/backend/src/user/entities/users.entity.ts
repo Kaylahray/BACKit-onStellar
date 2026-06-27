@@ -53,6 +53,12 @@ export class Users {
   })
   badges: Badge[];
 
+  @Column({ type: 'int', default: 0 })
+  currentWinStreak: number;
+
+  @Column({ type: 'int', default: 0 })
+  bestWinStreak: number;
+
   @Column({ type: 'boolean', default: false })
   banned: boolean;
 
