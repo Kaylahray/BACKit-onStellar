@@ -12,6 +12,8 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SearchModule } from './search/search.module';
 import { UsersModule } from './user/users.module';
 import { AuthModule } from './auth/auth.module';
+import { AppThrottlerModule } from './throttler/throttler.module';
+import { OracleSigningModule } from './oracle-signing/oracle.module';
 import { GatewaysModule } from './gateways/gateways.module';
 import { AuditModule } from './audit/audit.module';
 import { ActivityModule } from './activity/activity.module';
@@ -52,6 +54,8 @@ import { LoggerModule } from './common/logger/logger.module';
     SearchModule,
     UsersModule,
     AuthModule,
+    AppThrottlerModule,
+    OracleSigningModule,
     GatewaysModule,
     AuditModule,
     ActivityModule,
