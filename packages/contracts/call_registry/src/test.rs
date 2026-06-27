@@ -1536,6 +1536,61 @@ mod call_registry {
 
     // ── claim_expired_refund ──────────────────────────────────────────────────
 
+    // cancel_call
+
+    #[test]
+    fn test_cancel_call_succeeds() {
+        let (env, client, _admin, _om) = setup();
+        env.ledger().set_timestamp(1000);
+        let creator = Address::generate(&env);
+        let (call, _) = make_call(&env, &client, &creator);
+
+        client.cancel_call(&creator, &call.id);
+
+        let updated = client.get_call(&call.id);
+        assert!(updated.cancelled);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot cancel call with active stakes")]
+    fn test_cancel_call_after_third_party_stake_fails() {
+        let (env, client, _admin, _om) = setup();
+        env.ledger().set_timestamp(1000);
+        let creator = Address::generate(&env);
+        let staker = Address::generate(&env);
+        let (call, _) = make_call(&env, &client, &creator);
+
+        client.stake_on_call(&staker, &call.id, &50_000_000_i128, &1);
+        client.cancel_call(&creator, &call.id);
+    }
+
+    #[test]
+    #[should_panic(expected = "call is already cancelled")]
+    fn test_cancel_call_double_cancellation_fails() {
+        let (env, client, _admin, _om) = setup();
+        env.ledger().set_timestamp(1000);
+        let creator = Address::generate(&env);
+        let (call, _) = make_call(&env, &client, &creator);
+
+        client.cancel_call(&creator, &call.id);
+        client.cancel_call(&creator, &call.id);
+    }
+
+    #[test]
+    #[should_panic(expected = "call is already settled")]
+    fn test_cancel_call_settled_call_fails() {
+        let (env, client, _admin, _om) = setup();
+        env.ledger().set_timestamp(1000);
+        let creator = Address::generate(&env);
+        let (call, _) = make_call(&env, &client, &creator);
+
+        env.ledger().set_timestamp(2001);
+        client.resolve_call(&call.id, &1, &150_000_000_i128);
+        client.mark_settled(&call.id);
+
+        client.cancel_call(&creator, &call.id);
+    }
+
     #[test]
     fn test_claim_expired_refund_before_grace_period_fails() {
         let (env, client, _admin, _om) = setup();
