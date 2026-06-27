@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CallDetailData } from "@/types";
 import { useWalletContext } from "./WalletContext";
 import { signWithFreighter } from "@/lib/freighter";
+import GasFeeDisplay from "./GasFeeDisplay";
 
 interface Props {
   call: CallDetailData;
@@ -137,6 +138,10 @@ export default function ClaimPayout({ call, userStake, userSide, payoutAmount }:
       <p className="text-sm text-green-700 mb-4">
         Profit: <span className="font-bold text-green-600">+{profit.toFixed(2)} USDC</span>
       </p>
+
+      <div className="mb-3">
+        <GasFeeDisplay />
+      </div>
 
       {status === "error" && errorMsg && (
         <p className="text-xs text-red-600 mb-3 bg-red-50 border border-red-100 rounded-lg px-3 py-2">

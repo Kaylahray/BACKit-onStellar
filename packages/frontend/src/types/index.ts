@@ -112,4 +112,4 @@ export type UserStakesResponse = {
   limit: number
 }
 
-export type TabType = 'created' | 'participated' | 'resolved' | 'followers' | 'following'
+export type TabType = 'created' | 'participated' | 'resolved' | 'followers' | 'following' | 'my-markets'

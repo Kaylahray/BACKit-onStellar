@@ -2,6 +2,7 @@
 
 import ReactMarkdown from "react-markdown";
 import type { CreateCallFormData } from "./types";
+import GasFeeDisplay from "@/components/GasFeeDisplay";
 
 function describeCondition(form: CreateCallFormData) {
   const condition = form.condition;
@@ -97,9 +98,7 @@ export default function ReviewSubmitStep({
         <span className="text-sm font-semibold text-indigo-950">
           Estimated gas fee
         </span>
-        <span className="font-mono text-sm font-bold text-indigo-700">
-          {estimatedGasFee}
-        </span>
+        <GasFeeDisplay />
       </div>
     </section>
   );
