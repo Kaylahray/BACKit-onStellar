@@ -808,56 +808,6 @@ export class AnalyticsService {
     });
   }
 
-  // ─── Created Calls (#432) ─────────────────────────────────────────────────
-
-  async getCreatedCalls(
-    address: string,
-    page: number,
-    limit: number,
-    status?: string,
-  ): Promise<{ calls: Call[]; total: number; page: number; limit: number }> {
-    const query = this.callRepository
-      .createQueryBuilder('call')
-      .where('call.creatorAddress = :address', { address });
-
-    if (status) {
-      query.andWhere('call.status = :status', { status });
-    }
-
-    const total = await query.getCount();
-    const calls = await query
-      .orderBy('call.createdAt', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getMany();
-
-    return { calls, total, page, limit };
-  }
-
-  async getCreatedCallsStats(address: string): Promise<{
-    totalCalls: number;
-    resolvedCalls: number;
-    pendingCalls: number;
-    totalStakeVolume: number;
-  }> {
-    const stats = await this.callRepository
-      .createQueryBuilder('call')
-      .select('COUNT(*)', 'totalCalls')
-      .addSelect(`COUNT(CASE WHEN call.outcome IN ('YES','NO') THEN 1 END)`, 'resolvedCalls')
-      .addSelect(`COUNT(CASE WHEN call.outcome = 'PENDING' THEN 1 END)`, 'pendingCalls')
-      .addSelect('COALESCE(SUM(call.stakeAmount), 0)', 'totalStakeVolume')
-      .where('call.creatorAddress = :address', { address })
-      .getRawOne();
-
-    const r = stats as Record<string, string>;
-    return {
-      totalCalls: parseInt(r?.totalCalls ?? '0'),
-      resolvedCalls: parseInt(r?.resolvedCalls ?? '0'),
-      pendingCalls: parseInt(r?.pendingCalls ?? '0'),
-      totalStakeVolume: parseFloat(r?.totalStakeVolume ?? '0'),
-    };
-  }
-
   /**
    * Update win streak for a user after a call outcome is resolved.
    * Called when indexer processes a resolved outcome event.
@@ -912,5 +862,23 @@ export class AnalyticsService {
     );
 
     return { data: rows, total: parseInt(countRow.total), page, limit };
+  }
+
+  async getCreatedCallsStats(creatorAddress: string) {
+    const [row] = await this.dataSource.query(
+      `
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status IN ('RESOLVED_YES','RESOLVED_NO')) AS resolved,
+        COALESCE(SUM(COALESCE("totalYesStake",0) + COALESCE("totalNoStake",0)), 0) AS "totalVolume"
+      FROM calls WHERE "creatorAddress" = $1
+      `,
+      [creatorAddress],
+    );
+    return {
+      totalCreated: parseInt(row.total),
+      totalResolved: parseInt(row.resolved),
+      totalStakeVolumeAttracted: parseFloat(row.totalVolume),
+    };
   }
 }
