@@ -169,7 +169,7 @@ export class RelayService {
       const response = await this.rpcServer.sendTransaction(finalTx);
 
       if (response.status === 'ERROR') {
-        const responseAny = response as Record<string, unknown>;
+        const responseAny = response as unknown as Record<string, unknown>;
         const errorMsg =
           (responseAny.errorResultXdr as string | undefined) ||
           (response.errorResult
