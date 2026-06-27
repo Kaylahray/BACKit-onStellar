@@ -3,7 +3,7 @@
 extern crate std;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, Address, Bytes, BytesN, Env, Map,
+    contract, contractimpl, contracttype, testutils::{Address as _, Ledger as _}, Address, Bytes, BytesN, Env, Map,
     Vec,
 };
 
@@ -978,3 +978,81 @@ fn test_om_version_returns_contract_version() {
     let (_admin, _registry_id, _secret, _pubkey, client) = setup_single_oracle(&env);
     assert_eq!(client.version(), 1u32);
 }
+
+// --- Oracle Rotation Tests ---------------------------------------------------
+
+#[test]
+fn test_schedule_oracle_removal_stores_correctly() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    // Oracle is active before any removal is scheduled
+    assert!(client.is_oracle_active(&oracle_pubkey));
+
+    // Schedule removal at ledger 10; current sequence is 0
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    // Still active because effective_ledger has not been reached
+    assert!(client.is_oracle_active(&oracle_pubkey));
+}
+
+#[test]
+fn test_is_oracle_active_false_after_effective_ledger() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    // Advance past the effective ledger
+    env.ledger().with_mut(|li| { li.sequence_number = 10; });
+
+    assert!(!client.is_oracle_active(&oracle_pubkey));
+}
+
+#[test]
+fn test_execute_oracle_removal_succeeds_after_grace_period() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    env.ledger().with_mut(|li| { li.sequence_number = 10; });
+    client.execute_oracle_removal(&oracle_pubkey);
+
+    // Oracle must be gone from the active oracle set
+    assert!(!client.is_oracle(&oracle_pubkey));
+}
+
+#[test]
+fn test_execute_oracle_removal_fails_before_grace_period() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    // Sequence is still 0, grace period has not elapsed
+    let result = client.try_execute_oracle_removal(&oracle_pubkey);
+    assert!(result.is_err(), "premature execution must fail");
+}
+
+#[test]
+fn test_rotation_keys_do_not_collide_with_admin_or_quorum() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    let quorum_before = client.get_quorum();
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    env.ledger().with_mut(|li| { li.sequence_number = 10; });
+    client.execute_oracle_removal(&oracle_pubkey);
+
+    // Quorum must be unchanged after rotation
+    assert_eq!(client.get_quorum(), quorum_before, "quorum collided with rotation storage");
+
+    // Admin functions must still work, proving Admin key is intact
+    let (_, extra_pubkey) = gen_keypair(&env);
+    client.add_oracle(&extra_pubkey);
+    assert!(client.is_oracle(&extra_pubkey), "admin key corrupted by rotation");
+}
+

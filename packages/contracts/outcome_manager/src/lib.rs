@@ -8,6 +8,7 @@ mod events;
 mod fuzz_tests;
 mod storage;
 mod test;
+mod rotation;
 mod verification;
 
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec};
@@ -906,5 +907,19 @@ impl OutcomeManager {
         weighted_sum
             .checked_div(total_time)
             .unwrap_or_else(|| overflow(&env))
+    }
+
+    pub fn schedule_oracle_removal(env: Env, oracle_pubkey: BytesN<32>, effective_ledger: u32) {
+        require_admin(&env);
+        rotation::schedule_oracle_removal(&env, oracle_pubkey, effective_ledger);
+    }
+
+    pub fn execute_oracle_removal(env: Env, oracle_pubkey: BytesN<32>) {
+        require_admin(&env);
+        rotation::execute_oracle_removal(&env, oracle_pubkey);
+    }
+
+    pub fn is_oracle_active(env: Env, oracle_pubkey: BytesN<32>) -> bool {
+        rotation::is_oracle_active(&env, &oracle_pubkey)
     }
 }
