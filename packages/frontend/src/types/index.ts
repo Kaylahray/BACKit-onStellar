@@ -53,6 +53,7 @@ export interface Participant {
   amount: string;
   timestamp: string; // ISO date string
   txHash: string;
+  comment?: string;
 }
 
 export interface CallDetailData {

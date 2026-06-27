@@ -21,6 +21,75 @@ import {
 import { Call } from './entities/call.entity';
 import { Stake } from './entities/stake.entity';
 
+
+// Raw query result types
+interface DailyProfitRow {
+  dailyProfit: string | null;
+  date: string;
+}
+
+interface WeeklyProfitRow {
+  weeklyProfit: string | null;
+  date: string;
+}
+
+interface AccuracyRow {
+  correct: string | null;
+  total: string | null;
+  date: string;
+}
+
+interface WinLossRow {
+  wins: string;
+  losses: string;
+  pending: string;
+  total: string;
+}
+
+interface ProfitLossRow {
+  totalProfitLoss: string | null;
+}
+
+interface AccuracyStatsRow {
+  correct: string | null;
+  total: string | null;
+}
+
+
+// Raw query result types
+interface DailyProfitRow {
+  dailyProfit: string | null;
+  date: string;
+}
+
+interface WeeklyProfitRow {
+  weeklyProfit: string | null;
+  date: string;
+}
+
+interface AccuracyRow {
+  correct: string | null;
+  total: string | null;
+  date: string;
+}
+
+interface WinLossRow {
+  wins: string;
+  losses: string;
+  pending: string;
+  total: string;
+}
+
+interface ProfitLossRow {
+  totalProfitLoss: string | null;
+}
+
+interface AccuracyStatsRow {
+  correct: string | null;
+  total: string | null;
+}
+
+
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
@@ -172,7 +241,7 @@ export class AnalyticsService {
 
     // Convert to cumulative values
     let cumulative = 0;
-    const dataPoints: ProfitDataPoint[] = rawData.map((row) => {
+    const dataPoints: ProfitDataPoint[] = (rawData as DailyProfitRow[]).map((row) => {
       cumulative += parseFloat(row.dailyProfit || 0);
       return {
         date: new Date(row.date).toISOString().split('T')[0],
@@ -206,7 +275,7 @@ export class AnalyticsService {
 
     // Convert to cumulative values
     let cumulative = 0;
-    const dataPoints: ProfitDataPoint[] = rawData.map((row) => {
+    const dataPoints: ProfitDataPoint[] = (rawData as WeeklyProfitRow[]).map((row) => {
       cumulative += parseFloat(row.weeklyProfit || 0);
       return {
         date: new Date(row.date).toISOString().split('T')[0],
@@ -247,7 +316,7 @@ export class AnalyticsService {
     let totalCorrect = 0;
     let totalResolved = 0;
 
-    const dataPoints: AccuracyDataPoint[] = rawData.map((row) => {
+    const dataPoints: AccuracyDataPoint[] = (rawData as AccuracyRow[]).map((row) => {
       totalCorrect += parseInt(row.correct || 0);
       totalResolved += parseInt(row.total || 0);
 
@@ -293,11 +362,12 @@ export class AnalyticsService {
       .andWhere('stake.createdAt <= :endDate', { endDate })
       .getRawOne();
 
+    const r = result as WinLossRow | null;
     return {
-      wins: parseInt(result?.wins || 0),
-      losses: parseInt(result?.losses || 0),
-      pending: parseInt(result?.pending || 0),
-      total: parseInt(result?.total || 0),
+      wins: parseInt(r?.wins || '0'),
+      losses: parseInt(r?.losses || '0'),
+      pending: parseInt(r?.pending || '0'),
+      total: parseInt(r?.total || '0'),
     };
   }
 
@@ -332,9 +402,11 @@ export class AnalyticsService {
       .andWhere('call.resolvedAt <= :endDate', { endDate })
       .getRawOne();
 
-    const totalProfitLoss = parseFloat(profitResult?.totalProfitLoss || 0);
-    const correct = parseInt(accuracyResult?.correct || 0);
-    const total = parseInt(accuracyResult?.total || 0);
+    const pr = profitResult as ProfitLossRow | null;
+    const ar = accuracyResult as AccuracyStatsRow | null;
+    const totalProfitLoss = parseFloat(pr?.totalProfitLoss || '0');
+    const correct = parseInt(ar?.correct || '0');
+    const total = parseInt(ar?.total || '0');
     const overallAccuracy = total > 0 ? (correct / total) * 100 : 0;
 
     return {
