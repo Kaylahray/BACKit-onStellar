@@ -4,6 +4,8 @@ members = [
   "shared",
   "call_registry",
   "outcome_manager",
+  "prediction_market",
+  "prediction_market_factory",
   "contracts/hello-world",
 ]
 

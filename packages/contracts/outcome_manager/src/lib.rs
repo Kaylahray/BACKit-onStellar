@@ -8,6 +8,8 @@ mod storage;
 mod test;
 mod verification;
 
+pub use storage::SignedOutcome;
+
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec};
 use soroban_sdk::xdr::ToXdr;
 
@@ -22,7 +24,7 @@ use events::{
 };
 use storage::{
     set_dispute_window, set_max_submission_delay, InstanceKey, OracleVote, Outcome,
-    PersistentKey, PriceObservation, SignedOutcome, TempKey,
+    PersistentKey, PriceObservation, TempKey,
 };
 use verification::{build_message, verify_signature};
 
@@ -39,7 +41,11 @@ fn registry_resolve_call(
     end_price: i128,
 ) {
     let args = (call_id, outcome, end_price).into_val(env);
-    env.invoke_contract::<()>(registry, &Symbol::new(env, "resolve_call"), args);
+    let result: Result<Call, CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "resolve_call"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
 }
 
 fn registry_release_escrow(
@@ -50,12 +56,20 @@ fn registry_release_escrow(
     amount: i128,
 ) {
     let args = (call_id, to.clone(), amount).into_val(env);
-    env.invoke_contract::<()>(registry, &Symbol::new(env, "release_escrow"), args);
+    let result: Result<(), CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "release_escrow"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
 }
 
 fn registry_mark_settled(env: &Env, registry: &Address, call_id: u64) {
     let args = (call_id,).into_val(env);
-    env.invoke_contract::<()>(registry, &Symbol::new(env, "mark_settled"), args);
+    let result: Result<(), CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "mark_settled"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
 }
 
 /// Call `get_call(call_id)` on the CallRegistry and return the decoded Call.
@@ -83,6 +97,27 @@ fn registry_get_staker_stake(
     match result {
         Ok(stake) => stake,
         Err(_) => 0,
+    }
+}
+
+/// Look up the deployed market address for `call_id` via the configured factory.
+fn factory_get_market(env: &Env, factory: &Address, call_id: u64) -> Address {
+    let args = (call_id,).into_val(env);
+    let result: Result<Address, CallRegistryError> =
+        env.invoke_contract(factory, &Symbol::new(env, "get_market"), args);
+    match result {
+        Ok(addr) => addr,
+        Err(_) => soroban_sdk::panic_with_error!(env, OutcomeError::InvalidMarket),
+    }
+}
+
+/// When a factory is configured, ensure `registry` matches the factory's market for `call_id`.
+fn validate_market_registry(env: &Env, registry: &Address, call_id: u64) {
+    if let Some(factory) = storage::get_factory_opt(env) {
+        let expected = factory_get_market(env, &factory, call_id);
+        if expected != *registry {
+            soroban_sdk::panic_with_error!(env, OutcomeError::InvalidMarket);
+        }
     }
 }
 
@@ -313,11 +348,73 @@ impl OutcomeManager {
         is_paused(&env)
     }
 
+    /// Store the default registry / market address (admin only).
+    ///
+    /// Used by `finalize_outcome` when the dispute-window path is active.
+    pub fn set_registry(env: Env, registry: Address) {
+        require_admin(&env);
+        storage::set_registry(&env, registry);
+    }
+
+    /// Store the prediction market factory address (admin only).
+    ///
+    /// **Design decision:** a single shared `outcome_manager` instance serves all
+    /// factory-deployed markets. Oracle quorum state is keyed by global `call_id`,
+    /// while escrow lives in per-market contract instances. Per-market outcome
+    /// managers would isolate oracle config but multiply deployment and admin cost.
+    pub fn set_factory(env: Env, factory: Address) {
+        require_admin(&env);
+        storage::set_factory(&env, factory);
+    }
+
+    /// Return the configured factory address, if any.
+    pub fn get_factory(env: Env) -> Option<Address> {
+        storage::get_factory_opt(&env)
+    }
+
+    /// Resolve a market contract address from the configured factory.
+    pub fn resolve_market_address(env: Env, call_id: u64) -> Address {
+        let factory = match storage::get_factory_opt(&env) {
+            Some(factory) => factory,
+            None => soroban_sdk::panic_with_error!(&env, OutcomeError::FactoryNotSet),
+        };
+        factory_get_market(&env, &factory, call_id)
+    }
+
+    /// Submit an oracle outcome, resolving the market address from the factory.
+    pub fn submit_outcome_for_market(env: Env, signed: SignedOutcome, call_end_ts: u64) {
+        let registry = Self::resolve_market_address(env.clone(), signed.call_id);
+        Self::submit_outcome(env, registry, signed, call_end_ts);
+    }
+
+    /// Claim payout, resolving the market address from the factory.
+    pub fn claim_payout_for_market(
+        env: Env,
+        call_id: u64,
+        staker: Address,
+        staker_winning_stake: i128,
+        total_winning_stake: i128,
+        total_losing_stake: i128,
+    ) {
+        let registry = Self::resolve_market_address(env.clone(), call_id);
+        Self::claim_payout(
+            env,
+            registry,
+            call_id,
+            staker,
+            staker_winning_stake,
+            total_winning_stake,
+            total_losing_stake,
+        );
+    }
+
 
     pub fn submit_outcome(env: Env, registry: Address, signed: SignedOutcome, call_end_ts: u64) {
         if is_paused(&env) {
             soroban_sdk::panic_with_error!(&env, OutcomeError::ContractPaused);
         }
+
+        validate_market_registry(&env, &registry, signed.call_id);
 
         let oracles = get_oracles(&env);
         if !oracles.contains_key(signed.oracle_pubkey.clone()) {
