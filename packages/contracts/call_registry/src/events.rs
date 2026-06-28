@@ -373,3 +373,31 @@ pub fn emit_sep10_verified(env: &Env, user: &Address, home_domain: &soroban_sdk:
         (user.clone(), home_domain.clone()),
     );
 }
+/// Emitted when a staker withdraws their stake early with a penalty.
+pub fn emit_stake_withdrawn(
+    env: &Env,
+    call_id: u64,
+    staker: &Address,
+    refunded_amount: i128,
+    penalty: i128,
+) {
+    env.events().publish(
+        ("call_registry", "stake_withdrawn"),
+        (call_id, staker.clone(), refunded_amount, penalty),
+    );
+}
+
+/// Emitted when a staker withdraws native XLM stake early with a penalty.
+pub fn emit_xlm_stake_withdrawn(
+    env: &Env,
+    call_id: u64,
+    staker: &Address,
+    refunded_amount: i128,
+    penalty: i128,
+) {
+    env.events().publish(
+        ("call_registry", "xlm_stake_withdrawn"),
+        (call_id, staker.clone(), refunded_amount, penalty),
+    );
+}
+

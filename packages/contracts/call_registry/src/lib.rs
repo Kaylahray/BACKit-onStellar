@@ -76,6 +76,7 @@ fn transfer_token(env: &Env, stake_token: &Address, from: &Address, to: &Address
 mod admin;
 mod errors;
 mod events;
+mod withdrawal;
 #[cfg(test)]
 mod fuzz_tests;
 mod governance;
@@ -1518,5 +1519,33 @@ impl CallRegistry {
     /// Returns `None` if the user has never called `link_sep10_domain`.
     pub fn get_sep10_home_domain(env: Env, user: Address) -> Option<Bytes> {
         get_sep10_domain(&env, &user)
+    }
+
+    /// Withdraw stake early before a call ends, forfeiting a 10% penalty to the pool.
+    ///
+    /// - Panics if the call has ended, is settled, cancelled, or voided.
+    /// - Panics if the staker has no stake on `position`.
+    /// - Refunds `stake - penalty` to the staker; penalty remains in the pool.
+    /// - Emits `StakeWithdrawn` (or `xlm_stake_withdrawn` for native XLM).
+    ///
+    /// # Arguments
+    /// * `staker`   -- address withdrawing their stake (must sign).
+    /// * `call_id`  -- the call to withdraw from.
+    /// * `position` -- outcome position (1..=outcome_count).
+    pub fn withdraw_stake(
+        env: Env,
+        staker: Address,
+        call_id: u64,
+        position: u32,
+    ) -> (i128, i128) {
+        let config = get_config(&env).expect("not initialized");
+        assert!(!config.paused, "Contract is paused");
+        if storage::is_locked(&env) {
+            panic!("reentrancy detected");
+        }
+        storage::acquire_lock(&env);
+        let result = withdrawal::execute_withdrawal(&env, staker, call_id, position);
+        storage::release_lock(&env);
+        result
     }
 }
