@@ -1321,6 +1321,69 @@ impl CallRegistry {
         Ok(())
     }
 
+    /// Cancel a call before any third-party stakes have been placed (creator only).
+    ///
+    /// Refunds the creator's escrowed `stake_amount` and marks the call as cancelled.
+    ///
+    /// # Errors
+    /// * [`CallRegistryError::CallNotFound`] -- `call_id` does not exist.
+    ///
+    /// # Panics
+    /// * If the caller is not the call creator.
+    /// * If any outcome has been staked on by a third party.
+    /// * If the call is already settled or cancelled.
+    pub fn cancel_call(
+        env: Env,
+        creator: Address,
+        call_id: u64,
+    ) -> Result<(), CallRegistryError> {
+        creator.require_auth();
+        reentrancy_guard!(&env);
+
+        let mut call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
+
+        if call.creator != creator {
+            panic!("not the call creator");
+        }
+        if call.settled {
+            panic!("call is already settled");
+        }
+        if call.cancelled {
+            panic!("call is already cancelled");
+        }
+
+        // Reject if any third-party stake has been placed on any outcome.
+        let total_staked: i128 = (1..=call.outcome_count)
+            .map(|i| call.outcome_stakes.get(i).unwrap_or(0))
+            .sum();
+        if total_staked > 0 {
+            panic!("cannot cancel call with active stakes");
+        }
+
+        let stake_amount = call.stake_amount;
+        call.cancelled = true;
+        set_call(&env, &call);
+        extend_storage_ttl(&env);
+
+        // Refund the creator's escrowed stake.
+        transfer_token(
+            &env,
+            &call.stake_token,
+            &env.current_contract_address(),
+            &creator,
+            stake_amount,
+        );
+
+        if is_native_xlm(&env, &call.stake_token) {
+            emit_xlm_call_cancelled(&env, call_id, &creator, stake_amount);
+        } else {
+            emit_call_cancelled(&env, call_id, &creator, stake_amount);
+        }
+
+        storage::release_lock(&env);
+        Ok(())
+    }
+
     /// Void a call (admin only). Can be called at any time.
     /// Once voided, no new stakes or resolutions are accepted.
     /// Emits CallVoided.
