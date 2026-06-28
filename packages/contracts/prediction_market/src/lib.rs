@@ -3,6 +3,7 @@
 //! Each instance holds exactly one market's call data, stake tracking, and
 //! resolution logic. Deployed exclusively via [`prediction_market_factory`].
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 mod errors;
 mod events;
@@ -16,7 +17,6 @@ mod test;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, Map};
 use storage::*;
-use types::*;
 
 use errors::MarketError;
 use events::{emit_call_created, emit_call_resolved, emit_market_initialized, emit_stake_added};

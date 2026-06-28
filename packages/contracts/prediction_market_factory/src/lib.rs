@@ -148,14 +148,7 @@ impl PredictionMarketFactory {
         set_market(&env, call_id, &market_addr);
         append_market_list(&env, &market_addr);
 
-        emit_market_deployed(
-            &env,
-            call_id,
-            &market_addr,
-            &creator,
-            stake_token,
-            *end_ts,
-        );
+        emit_market_deployed(&env, call_id, &market_addr, &creator, stake_token, *end_ts);
 
         Ok(market_addr)
     }
@@ -209,10 +202,7 @@ impl PredictionMarketFactory {
     }
 
     /// Set the trusted outcome manager address (admin only).
-    pub fn set_outcome_manager(
-        env: Env,
-        outcome_manager: Address,
-    ) -> Result<(), FactoryError> {
+    pub fn set_outcome_manager(env: Env, outcome_manager: Address) -> Result<(), FactoryError> {
         let mut config = get_config(&env).ok_or(FactoryError::NotInitialized)?;
         config.admin.require_auth();
         config.outcome_manager = outcome_manager;

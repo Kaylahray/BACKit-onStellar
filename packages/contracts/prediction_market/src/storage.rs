@@ -31,11 +31,7 @@ pub fn set_user_stake(env: &Env, staker: &soroban_sdk::Address, position: u32, a
         .set(&DataKey::UserStake(staker.clone(), position), &amount);
 }
 
-pub fn get_user_stake(
-    env: &Env,
-    staker: &soroban_sdk::Address,
-    position: u32,
-) -> i128 {
+pub fn get_user_stake(env: &Env, staker: &soroban_sdk::Address, position: u32) -> i128 {
     env.storage()
         .instance()
         .get(&DataKey::UserStake(staker.clone(), position))

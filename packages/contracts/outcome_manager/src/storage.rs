@@ -92,6 +92,7 @@ pub fn set_registry(env: &Env, registry: Address) {
         .set(&InstanceKey::Registry, &registry);
 }
 
+#[allow(dead_code)]
 pub fn get_registry_opt(env: &Env) -> Option<Address> {
     env.storage().instance().get(&InstanceKey::Registry)
 }
@@ -107,6 +108,7 @@ pub fn get_factory_opt(env: &Env) -> Option<Address> {
 }
 
 /// Read the stored CallRegistry address; panics if not set.
+#[allow(dead_code)]
 pub fn get_registry(env: &Env) -> Address {
     env.storage()
         .instance()

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use soroban_sdk::{Address, Env};
 
 pub fn emit_factory_initialized(env: &Env, admin: &Address, outcome_manager: &Address) {

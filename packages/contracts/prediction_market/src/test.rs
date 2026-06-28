@@ -92,7 +92,16 @@ fn market_resolve_requires_outcome_manager() {
 
     let market_id = env.register(
         PredictionMarket,
-        (42u64, creator, outcome_manager.clone(), factory, 100_000i128, 0i128, 0u64, args),
+        (
+            42u64,
+            creator,
+            outcome_manager.clone(),
+            factory,
+            100_000i128,
+            0i128,
+            0u64,
+            args,
+        ),
     );
     let market = PredictionMarketClient::new(&env, &market_id);
 

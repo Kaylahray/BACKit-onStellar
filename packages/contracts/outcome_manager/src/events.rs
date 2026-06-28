@@ -1,4 +1,6 @@
-use soroban_sdk::{symbol_short, Env, Vec};
+#![allow(deprecated)]
+
+use soroban_sdk::{symbol_short, Env};
 
 /// Emitted when a new oracle outcome report is accepted (before quorum)
 pub fn emit_outcome_submitted(
@@ -65,12 +67,14 @@ pub fn emit_outcome_disputed(env: &Env, call_id: u64, new_outcome: u32, new_pric
 ///
 /// While paused, `submit_outcome` and `claim_payout` revert with
 /// [`OutcomeError::ContractPaused`].
+#[allow(dead_code)]
 pub fn emit_contract_paused(env: &Env) {
     env.events()
         .publish((symbol_short!("contract"), symbol_short!("paused")), ());
 }
 
 /// Emitted when the admin unpauses the contract, resuming normal operations.
+#[allow(dead_code)]
 pub fn emit_contract_unpaused(env: &Env) {
     env.events()
         .publish((symbol_short!("contract"), symbol_short!("unpaused")), ());

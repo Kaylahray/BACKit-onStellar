@@ -33,9 +33,8 @@ fn install_market_wasm(env: &Env) -> BytesN<32> {
             )
         });
 
-    let wasm_bytes = std::fs::read(wasm_path).unwrap_or_else(|err| {
-        panic!("failed to read {}: {err}", wasm_path.display())
-    });
+    let wasm_bytes = std::fs::read(wasm_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", wasm_path.display()));
     env.deployer().upload_contract_wasm(wasm_bytes.as_slice())
 }
 

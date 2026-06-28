@@ -1,3 +1,6 @@
+#![allow(deprecated)]
+#![allow(clippy::too_many_arguments)]
+
 use soroban_sdk::{Address, Bytes, BytesN, Env};
 
 pub fn emit_market_initialized(
@@ -13,20 +16,18 @@ pub fn emit_market_initialized(
     );
 }
 
-pub fn emit_stake_added(
-    env: &Env,
-    call_id: u64,
-    staker: &Address,
-    amount: i128,
-    position: u32,
-) {
-    env.events()
-        .publish(("prediction_market", "stake_added"), (call_id, staker.clone(), amount, position));
+pub fn emit_stake_added(env: &Env, call_id: u64, staker: &Address, amount: i128, position: u32) {
+    env.events().publish(
+        ("prediction_market", "stake_added"),
+        (call_id, staker.clone(), amount, position),
+    );
 }
 
 pub fn emit_call_resolved(env: &Env, call_id: u64, outcome: u32, end_price: i128) {
-    env.events()
-        .publish(("prediction_market", "resolved"), (call_id, outcome, end_price));
+    env.events().publish(
+        ("prediction_market", "resolved"),
+        (call_id, outcome, end_price),
+    );
 }
 
 pub fn emit_call_created(
