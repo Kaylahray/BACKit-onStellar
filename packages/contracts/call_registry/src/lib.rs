@@ -85,7 +85,7 @@ mod shares;
 mod storage;
 #[cfg(test)]
 mod test;
-mod types;
+pub mod types;
 
 use backit_shared::{OUTCOME_DOWN, OUTCOME_UP};
 use errors::CallRegistryError;
@@ -191,7 +191,6 @@ impl CallRegistry {
     }
 
     /// Test-only: register the XLM SAC address so is_native_xlm works in tests.
-    #[cfg(test)]
     pub fn set_xlm_sac_address(env: Env, xlm_sac: Address) {
         env.storage()
             .instance()
