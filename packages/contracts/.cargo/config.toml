@@ -3,3 +3,8 @@
 rustflags = [
     "-C", "target-feature=-bulk-memory,-mutable-globals,-reference-types,-sign-ext",
 ]
+
+[target.wasm32v1-none]
+rustflags = [
+    "-C", "target-feature=-bulk-memory,-mutable-globals,-reference-types,-sign-ext",
+]

@@ -6,7 +6,7 @@ fn workspace_root(manifest_dir: &Path) -> PathBuf {
 }
 
 fn wasm_candidates(root: &Path) -> Vec<PathBuf> {
-    ["wasm32-unknown-unknown", "wasm32v1-none"]
+    ["wasm32v1-none", "wasm32-unknown-unknown"]
         .into_iter()
         .flat_map(|target| {
             let dir = root.join("target").join(target).join("release");
@@ -18,27 +18,56 @@ fn wasm_candidates(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn any_wasm_exists(root: &Path) -> bool {
-    wasm_candidates(root).iter().any(|path| path.exists())
+fn soroban_compatible_wasm_exists(root: &Path) -> bool {
+    let v1 = root
+        .join("target/wasm32v1-none/release")
+        .join("prediction_market.wasm");
+    let optimized = [
+        "wasm32v1-none",
+        "wasm32-unknown-unknown",
+    ]
+    .into_iter()
+    .map(|target| {
+        root.join("target")
+            .join(target)
+            .join("release")
+            .join("prediction_market.optimized.wasm")
+    })
+    .any(|path| path.exists());
+
+    v1.exists() || optimized
 }
 
-fn main() {
-    let manifest_dir =
-        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let root = workspace_root(&manifest_dir);
+fn stellar_available() -> bool {
+    Command::new("stellar")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
 
-    println!("cargo:rerun-if-changed=../prediction_market/src");
-    println!("cargo:rerun-if-changed=../prediction_market/Cargo.toml");
-    println!("cargo:rerun-if-changed=../.cargo/config.toml");
+fn build_with_stellar(root: &Path) -> bool {
+    let status = Command::new("stellar")
+        .current_dir(root.join("prediction_market"))
+        .args(["contract", "build"])
+        .status();
 
-    if any_wasm_exists(&root) {
-        return;
+    match status {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            eprintln!("stellar contract build failed with status {status}");
+            false
+        }
+        Err(err) => {
+            eprintln!("failed to run stellar contract build: {err}");
+            false
+        }
     }
+}
 
-    eprintln!("prediction_market WASM not found — building for factory integration tests...");
-
+fn build_with_cargo(root: &Path) -> bool {
     let status = Command::new("cargo")
-        .current_dir(&root)
+        .current_dir(root)
         .args([
             "build",
             "--release",
@@ -51,12 +80,61 @@ fn main() {
         .expect("failed to spawn cargo build for prediction-market");
 
     if !status.success() {
-        panic!("cargo build for prediction-market failed with status {status}");
+        eprintln!("cargo build for prediction-market failed with status {status}");
+        return false;
     }
 
-    if !any_wasm_exists(&root) {
+    let raw_wasm = root
+        .join("target/wasm32-unknown-unknown/release")
+        .join("prediction_market.wasm");
+    if !raw_wasm.exists() {
+        return false;
+    }
+
+    if stellar_available() {
+        let status = Command::new("stellar")
+            .args([
+                "contract",
+                "optimize",
+                "--wasm",
+                raw_wasm.to_str().expect("non-utf8 wasm path"),
+            ])
+            .status()
+            .expect("failed to spawn stellar contract optimize");
+
+        if status.success() {
+            return true;
+        }
+        eprintln!("stellar contract optimize failed with status {status}");
+    }
+
+    false
+}
+
+fn main() {
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let root = workspace_root(&manifest_dir);
+
+    println!("cargo:rerun-if-changed=../prediction_market/src");
+    println!("cargo:rerun-if-changed=../prediction_market/Cargo.toml");
+    println!("cargo:rerun-if-changed=../.cargo/config.toml");
+
+    if soroban_compatible_wasm_exists(&root) {
+        return;
+    }
+
+    eprintln!("prediction_market WASM not found — building for factory integration tests...");
+
+    let built = if stellar_available() {
+        build_with_stellar(&root)
+    } else {
+        false
+    } || build_with_cargo(&root);
+
+    if !built || !soroban_compatible_wasm_exists(&root) {
         panic!(
-            "prediction_market WASM still missing after build — expected one of:\n  {}",
+            "failed to produce Soroban-compatible prediction_market WASM — expected one of:\n  {}",
             wasm_candidates(&root)
                 .iter()
                 .map(|p| p.display().to_string())

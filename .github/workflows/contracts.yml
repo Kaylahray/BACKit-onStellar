@@ -40,16 +40,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-contracts-
 
-      - name: Build prediction_market WASM for factory tests
-        run: |
-          cd packages/contracts
-          cargo build --release --target wasm32-unknown-unknown -p prediction-market
-
-      - name: Run Cargo Test
-        run: |
-          cd packages/contracts
-          cargo test
-
       - name: Install Stellar CLI
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,6 +65,20 @@ jobs:
           tar -xzf stellar-cli.tar.gz
           sudo mv stellar /usr/local/bin/
           stellar --version
+
+      - name: Build prediction_market WASM for factory tests
+        run: |
+          cd packages/contracts
+          rm -f target/wasm32-unknown-unknown/release/prediction_market*.wasm
+          rm -f target/wasm32v1-none/release/prediction_market*.wasm
+          cd prediction_market
+          stellar contract build
+          ls -la ../target/wasm32v1-none/release/prediction_market*.wasm
+
+      - name: Run Cargo Test
+        run: |
+          cd packages/contracts
+          cargo test
 
       - name: Build Contracts with Stellar CLI
         run: |
