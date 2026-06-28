@@ -29,9 +29,81 @@ pub struct MockRegistry;
 
 #[contractimpl]
 impl MockRegistry {
-    pub fn resolve_call(_env: Env, _call_id: u64, _outcome: u32, _end_price: i128) {}
-    pub fn release_escrow(_env: Env, _call_id: u64, _to: Address, _amount: i128) {}
-    pub fn mark_settled(_env: Env, _call_id: u64) {}
+    fn default_mock_call(env: &Env, call_id: u64) -> Call {
+        let outcome_count = 2u32;
+        let mut outcome_stakes = Map::new(env);
+        outcome_stakes.set(1, 0);
+        outcome_stakes.set(2, 0);
+
+        let mut stakes = Map::new(env);
+        stakes.set(1, Map::new(env));
+        stakes.set(2, Map::new(env));
+
+        Call {
+            id: call_id,
+            creator: Address::generate(env),
+            stake_token: Address::generate(env),
+            stake_amount: 1,
+            end_ts: 0,
+            token_address: Address::generate(env),
+            pair_id: Bytes::from_slice(env, b"mock"),
+            metadata_hash: BytesN::from_array(env, &[0u8; 32]),
+            outcome_count,
+            outcome_stakes,
+            stakes,
+            outcome: 0,
+            start_price: 100,
+            end_price: 0,
+            condition: ConditionType::TargetAbove(100),
+            settled: false,
+            voided: false,
+            created_at: 0,
+            cancelled: false,
+            metadata_version: 0,
+            share_tokens: Map::new(env),
+        }
+    }
+
+    pub fn resolve_call(
+        env: Env,
+        call_id: u64,
+        outcome: u32,
+        end_price: i128,
+    ) -> Result<Call, CallRegistryError> {
+        let mut call: Call = env
+            .storage()
+            .instance()
+            .get(&MockDataKey::Call(call_id))
+            .unwrap_or_else(|| Self::default_mock_call(&env, call_id));
+        call.outcome = outcome;
+        call.end_price = end_price;
+        env.storage()
+            .instance()
+            .set(&MockDataKey::Call(call_id), &call);
+        Ok(call)
+    }
+
+    pub fn release_escrow(
+        _env: Env,
+        _call_id: u64,
+        _to: Address,
+        _amount: i128,
+    ) -> Result<(), CallRegistryError> {
+        Ok(())
+    }
+
+    pub fn mark_settled(env: Env, call_id: u64) -> Result<(), CallRegistryError> {
+        let mut call: Call = env
+            .storage()
+            .instance()
+            .get(&MockDataKey::Call(call_id))
+            .unwrap_or_else(|| Self::default_mock_call(&env, call_id));
+        call.settled = true;
+        env.storage()
+            .instance()
+            .set(&MockDataKey::Call(call_id), &call);
+        Ok(())
+    }
 
     pub fn set_mock_call(env: Env, call_id: u64, call: Call) {
         env.storage()
