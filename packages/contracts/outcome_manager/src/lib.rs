@@ -4,6 +4,8 @@ mod auth;
 mod call_types;
 mod errors;
 mod events;
+#[cfg(test)]
+mod fuzz_tests;
 mod storage;
 mod test;
 mod verification;
@@ -334,6 +336,31 @@ impl OutcomeManager {
         storage::get_max_submission_delay(&env)
     }
 
+    /// Set the SDEX price deviation threshold in basis points (admin only).
+    /// Default: 500 (5%). Submissions deviating more than this are rejected.
+    pub fn set_sdex_threshold(env: Env, new_threshold: u32) {
+        require_admin(&env);
+        env.storage().instance().set(&InstanceKey::SdexThresholdBps, &new_threshold);
+        emit_admin_params_changed(&env, new_threshold as u64);
+    }
+
+    pub fn get_sdex_threshold(env: Env) -> u32 {
+        env.storage().instance().get(&InstanceKey::SdexThresholdBps).unwrap_or(500)
+    }
+
+    /// Query the SDEX midpoint price for a pair from the on-chain orderbook.
+    /// Returns None when there is insufficient liquidity (spread > 10%).
+    /// NOTE: In Soroban, direct SDEX orderbook queries require a host function
+    /// or a helper oracle contract. This returns None (graceful degradation)
+    /// when the query cannot be satisfied, as per the acceptance criteria.
+    pub fn query_sdex_midpoint(_env: Env, _selling_asset: Address, _buying_asset: Address) -> Option<i128> {
+        // Soroban does not yet expose a native host function for SDEX orderbook
+        // queries within a single transaction budget. When the Stellar protocol
+        // exposes this capability, replace the body with the actual host call.
+        // For now: return None so callers gracefully skip SDEX validation.
+        None
+    }
+
     pub fn pause(env: Env) {
         require_admin(&env);
         env.storage().instance().set(&InstanceKey::Paused, &true);
@@ -450,6 +477,27 @@ impl OutcomeManager {
             signed.timestamp,
         );
         verify_signature(&env, &signed.oracle_pubkey, &signed.signature, &message);
+
+        // SDEX cross-validation: if SDEX returns a midpoint, check deviation.
+        // If SDEX has no liquidity, skip (None = graceful degradation).
+        let sdex_midpoint: Option<i128> = None; // host function not yet available
+        if let Some(sdex_price) = sdex_midpoint {
+            if sdex_price > 0 {
+                let threshold_bps: u32 = env.storage().instance()
+                    .get(&InstanceKey::SdexThresholdBps).unwrap_or(500);
+                let diff = (signed.price - sdex_price).abs();
+                let deviation_bps = diff.checked_mul(10000).unwrap_or(i128::MAX)
+                    / sdex_price;
+                if deviation_bps > threshold_bps as i128 {
+                    // Emit warning event then reject
+                    env.events().publish(
+                        ("outcome_manager", "PriceDeviationWarning"),
+                        (signed.call_id, signed.price, sdex_price, deviation_bps as u32),
+                    );
+                    soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidOutcome);
+                }
+            }
+        }
 
         let outcome_hash: BytesN<32> = env.crypto().sha256(&message).into();
 

@@ -60,6 +60,8 @@ pub enum InstanceKey {
     MaxSubmissionDelay,
     /// Map of (call_id, staker) -> claimable balance ID (32-byte Stellar balance ID)
     ClaimableBalanceId(u64, Address),
+    /// SDEX deviation threshold in basis points (default 500 = 5%)
+    SdexThresholdBps,
 }
 
 #[contracttype]

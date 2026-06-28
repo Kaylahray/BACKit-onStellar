@@ -411,4 +411,173 @@ describe('RelayService', () => {
       (service as any).validateTransaction(tx),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('estimateFee rejects invalid XDR', async () => {
+    const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+    (TransactionBuilder.fromXDR as any).mockImplementationOnce(() => {
+      throw new Error('bad xdr');
+    });
+
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      { simulateTransaction: jest.fn() } as any,
+    );
+
+    await expect((service as any).estimateFee('bad-xdr')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('estimateFee returns fee estimates with successful simulation', async () => {
+    const { TransactionBuilder, SorobanRpc } =
+      await import('@stellar/stellar-sdk');
+    const tx: any = {
+      operations: [],
+      signatures: [Buffer.from('sig')],
+      fee: '100',
+    };
+    (TransactionBuilder.fromXDR as any).mockReturnValueOnce(tx);
+
+    jest
+      .spyOn(SorobanRpc.Api, 'isSimulationSuccess')
+      .mockReturnValueOnce(true);
+
+    const rpcServer = {
+      simulateTransaction: jest
+        .fn()
+        .mockResolvedValue({ minResourceFee: '200', cost: { cpu: 1 } }),
+    };
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      rpcServer as any,
+    );
+
+    const origFetch = global.fetch;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 0.5 } }) }) as any;
+
+    const result = await (service as any).estimateFee('valid-xdr');
+    expect(result).toEqual({
+      estimatedGasXLM: '0.0000200',
+      estimatedGasUSD: '0.000010',
+      resourceCost: { cpu: 1 },
+      sponsored: false,
+    });
+    expect(rpcServer.simulateTransaction).toHaveBeenCalledWith(tx);
+    global.fetch = origFetch;
+  });
+
+  it('estimateFee falls back to innerTx.fee when simulation fails', async () => {
+    const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+    const tx: any = { fee: '500' };
+    (TransactionBuilder.fromXDR as any).mockReturnValueOnce(tx);
+
+    const rpcServer = {
+      simulateTransaction: jest.fn().mockRejectedValue(new Error('rpc error')),
+    };
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      rpcServer as any,
+    );
+
+    const origFetch = global.fetch;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 1 } }) }) as any;
+
+    const result = await (service as any).estimateFee('valid-xdr');
+    expect(result.estimatedGasXLM).toBe('0.0000500');
+    expect(result.resourceCost).toBeNull();
+    global.fetch = origFetch;
+  });
+
+  it('estimateFee handles FeeBumpTransaction', async () => {
+    const { TransactionBuilder, SorobanRpc, FeeBumpTransaction } =
+      await import('@stellar/stellar-sdk');
+    const inner: any = { fee: '100' };
+    const feeBump: any = new (FeeBumpTransaction as any)(inner, 'SPONSOR');
+    (TransactionBuilder.fromXDR as any).mockReturnValueOnce(feeBump);
+
+    jest
+      .spyOn(SorobanRpc.Api, 'isSimulationSuccess')
+      .mockReturnValueOnce(false);
+
+    const rpcServer = {
+      simulateTransaction: jest.fn().mockResolvedValue({}),
+    };
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      rpcServer as any,
+    );
+
+    const origFetch = global.fetch;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 0.5 } }) }) as any;
+
+    const result = await (service as any).estimateFee('fee-bump-xdr');
+    expect(result.estimatedGasXLM).toBe('0.0000100');
+    expect(result.sponsored).toBe(false);
+    global.fetch = origFetch;
+  });
+
+  it('estimateFee returns 0 USD when XLM price fetch fails', async () => {
+    const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+    (TransactionBuilder.fromXDR as any).mockReturnValueOnce({ fee: '100' });
+    const origFetch = global.fetch;
+    global.fetch = jest.fn().mockRejectedValue(new Error('network error'));
+
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
+    );
+
+    const result = await (service as any).estimateFee('valid-xdr');
+    expect(result.estimatedGasUSD).toBe('0.000000');
+    global.fetch = origFetch;
+  });
+
+  it('estimateFee uses cached XLM price', async () => {
+    const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+    (TransactionBuilder.fromXDR as any).mockReturnValueOnce({ fee: '100' });
+
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
+    );
+
+    (service as any).xlmPriceCache = {
+      usd: 2,
+      expiresAt: Date.now() + 60000,
+    };
+
+    const origFetch = global.fetch;
+    global.fetch = jest.fn();
+
+    const result = await (service as any).estimateFee('valid-xdr');
+    expect(result.estimatedGasUSD).toBe('0.000020');
+    expect(global.fetch).not.toHaveBeenCalled();
+    global.fetch = origFetch;
+  });
+
+  it('estimateFee returns sponsored=true when hotWallet is configured', async () => {
+    process.env.RELAY_HOT_WALLET_SECRET = 'S';
+    const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+    (TransactionBuilder.fromXDR as any).mockReturnValueOnce({ fee: '100' });
+
+    const origFetch = global.fetch;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 0.5 } }) }) as any;
+
+    const service = new RelayService(
+      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
+    );
+
+    const result = await (service as any).estimateFee('valid-xdr');
+    expect(result.sponsored).toBe(true);
+    global.fetch = origFetch;
+  });
 });

@@ -1,4 +1,4 @@
-use soroban_sdk::{symbol_short, Env};
+use soroban_sdk::{symbol_short, Env, Vec};
 
 /// Emitted when a new oracle outcome report is accepted (before quorum)
 pub fn emit_outcome_submitted(

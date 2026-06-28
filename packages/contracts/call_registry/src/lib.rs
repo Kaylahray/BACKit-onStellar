@@ -912,6 +912,7 @@ impl CallRegistry {
         new_threshold: u32,
     ) -> Result<(), CallRegistryError> {
         let mut config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        // Require existing admin (or threshold signatures in future iterations)
         config.admin.require_auth();
         if new_threshold == 0 || new_threshold as usize > new_admins.len() as usize {
             panic!("threshold must be >= 1 and <= admin_set length");
@@ -979,7 +980,6 @@ impl CallRegistry {
         governance::set_governance_config(&env, &config.admin, cfg);
         Ok(())
     }
-
     /// Replace the outcome manager (admin only).
     /// # Errors
     /// Propagates errors from [`admin::set_outcome_manager`].

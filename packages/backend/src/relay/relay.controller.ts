@@ -15,6 +15,23 @@ class RelayTxDto {
 export class RelayController {
   constructor(private readonly relayService: RelayService) {}
 
+  @Post('estimate-fee')
+  @ApiOperation({
+    summary: 'Simulate a transaction and return estimated gas fee',
+  })
+  @ApiResponse({ status: 201, description: 'Fee estimate returned' })
+  @ApiResponse({ status: 400, description: 'Invalid XDR' })
+  async estimateFee(@Body() dto: RelayTxDto) {
+    if (!dto.xdr) throw new BadRequestException('XDR string is required');
+    try {
+      return await this.relayService.estimateFee(dto.xdr);
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      throw new BadRequestException(`Fee estimation failed: ${msg}`);
+    }
+  }
+
   @Post('tx')
   @ApiOperation({
     summary: 'Sponsor a transaction by co-signing and submitting',
@@ -28,18 +45,13 @@ export class RelayController {
     description: 'Invalid XDR or unauthorized transaction',
   })
   async relay(@Body() dto: RelayTxDto) {
-    if (!dto.xdr) {
-      throw new BadRequestException('XDR string is required');
-    }
-
+    if (!dto.xdr) throw new BadRequestException('XDR string is required');
     try {
-      const result = await this.relayService.sponsorAndSubmit(dto.xdr);
-      return result;
-    } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new BadRequestException(`Relay failed: ${error.message}`);
+      return await this.relayService.sponsorAndSubmit(dto.xdr);
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      throw new BadRequestException(`Relay failed: ${msg}`);
     }
   }
 }

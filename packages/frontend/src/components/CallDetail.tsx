@@ -12,6 +12,7 @@ import { CallDetailData } from "@/types";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useWalletContext } from "./WalletContext";
 import ClaimPayout from "./ClaimPayout";
+import PriceAlertToggle from "./PriceAlertToggle";
 
 interface UserPosition {
   stake: number;
@@ -109,7 +110,10 @@ export default function CallDetail({ call }: { call: CallDetailData }) {
               payoutAmount={userPosition.payout}
             />
           ) : !call.resolved ? (
-            <StakingInterface call={call} onStake={handleStake} odds={odds} />
+            <>
+              <StakingInterface call={call} onStake={handleStake} odds={odds} />
+              <PriceAlertToggle callId={call.id} walletAddress={publicKey ?? undefined} />
+            </>
           ) : null}
           
           {/* Pool summary */}

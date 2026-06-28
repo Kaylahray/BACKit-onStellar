@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CallDetailData } from "@/types";
 import PayoutCalculator from "./PayoutCalculator";
+import GasFeeDisplay from "./GasFeeDisplay";
 
 interface Props {
   call: CallDetailData;
@@ -14,6 +15,8 @@ export default function StakingInterface({ call, onStake, odds }: Props) {
   const [amount, setAmount] = useState<string>('10');
   const [selectedSide, setSelectedSide] = useState<'YES' | 'NO' | null>(null);
   const [isStaking, setIsStaking] = useState(false);
+  const [comment, setComment] = useState<string>('');
+  const MAX_COMMENT = 140;
 
   const handleStake = async () => {
     if (!selectedSide || !amount) return;
@@ -23,6 +26,7 @@ export default function StakingInterface({ call, onStake, odds }: Props) {
       await onStake(parseFloat(amount), selectedSide);
       setAmount('10');
       setSelectedSide(null);
+      setComment('');
     } catch (error) {
       console.error('Staking failed:', error);
     } finally {
@@ -105,11 +109,52 @@ export default function StakingInterface({ call, onStake, odds }: Props) {
             </button>
           ))}
         </div>
+
+        {/* Percentage presets */}
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {[25, 50, 75, 100].map((pct) => {
+            const BALANCE = 1000; // placeholder; replace with actual wallet balance
+            const val = Math.floor(BALANCE * pct / 100);
+            const active = parseFloat(amount) === val;
+            return (
+              <button
+                key={pct}
+                onClick={() => setAmount(String(val))}
+                className={`py-2 text-xs font-bold rounded-xl border transition-all ${
+                  active
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'border-gray-100 text-gray-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 bg-white'
+                }`}
+              >
+                {pct === 100 ? 'MAX' : `${pct}%`}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Payout Calculator */}
       <div className="mb-10">
         <PayoutCalculator callId={call.id} amount={numericAmount} side={selectedSide} />
+      </div>
+
+      {/* Optional stake comment */}
+      <div className="mb-6">
+        <div className="flex justify-between items-center mb-2">
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]">
+            Add a reason (optional)
+          </label>
+          <span className={`text-xs font-medium ${comment.length > MAX_COMMENT - 20 ? 'text-red-500' : 'text-gray-400'}`}>
+            {MAX_COMMENT - comment.length}
+          </span>
+        </div>
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value.slice(0, MAX_COMMENT))}
+          placeholder="Share your thesis for this stake..."
+          rows={2}
+          className="w-full rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-700 placeholder-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        />
       </div>
 
       {/* Stake button */}
@@ -137,7 +182,11 @@ export default function StakingInterface({ call, onStake, odds }: Props) {
         )}
       </button>
       
-      <p className="mt-6 text-[10px] text-center text-gray-400 font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2">
+      <div className="mt-4 flex justify-center">
+        <GasFeeDisplay />
+      </div>
+
+      <p className="mt-3 text-[10px] text-center text-gray-400 font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2">
          <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
          Soroban Network Smart Contract v1.2.4
       </p>

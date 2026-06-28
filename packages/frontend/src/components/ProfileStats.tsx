@@ -25,6 +25,13 @@ export default function ProfileStats({ user }: ProfileStatsProps) {
       bgColor: 'bg-blue-100'
     },
     {
+      label: 'Best Streak',
+      value: (user as any).bestWinStreak ? `🔥 ${(user as any).bestWinStreak}` : '—',
+      icon: TrendingUp,
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-100'
+    },
+    {
       label: 'Followers',
       value: formatNumber(user.followers),
       icon: Users,
