@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(deprecated)]
 #![allow(unused)]
+#![allow(clippy::redundant_field_names)]
 
 use soroban_sdk::{
     contract, contractimpl,

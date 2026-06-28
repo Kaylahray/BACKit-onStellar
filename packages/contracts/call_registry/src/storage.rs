@@ -12,7 +12,8 @@ const INSTANCE_BUMP_AMOUNT: u32 = 120_960; // ~7 days
 #[contracttype]
 pub enum DataKey {
     Config,
-    CallCounter,    GlobalStats,
+    CallCounter,
+    GlobalStats,
     GlobalStakerSeen(Address),
     Call(u64),
     CallStakers(u64),
@@ -90,6 +91,7 @@ pub fn get_call(env: &Env, call_id: u64) -> Option<Call> {
 }
 
 /// Check whether a call exists in persistent storage
+#[allow(dead_code)]
 pub fn call_exists(env: &Env, call_id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Call(call_id))
 }
@@ -301,12 +303,14 @@ pub fn get_user_stake(env: &Env, call_id: u64, staker: &Address, position: u32) 
 }
 
 /// Get up staker count for a call
+#[allow(dead_code)]
 pub fn get_up_staker_count(env: &Env, call_id: u64) -> u32 {
     let key = DataKey::UpStakerCount(call_id);
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
 /// Set up staker count for a call
+#[allow(dead_code)]
 pub fn set_up_staker_count(env: &Env, call_id: u64, count: u32) {
     let key = DataKey::UpStakerCount(call_id);
     env.storage().persistent().set(&key, &count);
@@ -318,12 +322,14 @@ pub fn set_up_staker_count(env: &Env, call_id: u64, count: u32) {
 }
 
 /// Get down staker count for a call
+#[allow(dead_code)]
 pub fn get_down_staker_count(env: &Env, call_id: u64) -> u32 {
     let key = DataKey::DownStakerCount(call_id);
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
 /// Set down staker count for a call
+#[allow(dead_code)]
 pub fn set_down_staker_count(env: &Env, call_id: u64, count: u32) {
     let key = DataKey::DownStakerCount(call_id);
     env.storage().persistent().set(&key, &count);

@@ -48,8 +48,10 @@ pub enum InstanceKey {
     Claimed(u64, Address),
     FeeCollector,
     FeeBps,
-    /// Stored CallRegistry address; set via set_registry() to avoid caller-supplied forgery
+    /// Stored CallRegistry / market address; set via `set_registry`.
     Registry,
+    /// Factory that deploys per-market instances; set via `set_factory`.
+    Factory,
     DisputeWindow,
     PendingOutcome(u64),     // stores Outcome after quorum, before finalization
     DisputeWindowStart(u64), // ledger timestamp when quorum was reached
@@ -90,7 +92,23 @@ pub fn set_registry(env: &Env, registry: Address) {
         .set(&InstanceKey::Registry, &registry);
 }
 
+#[allow(dead_code)]
+pub fn get_registry_opt(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&InstanceKey::Registry)
+}
+
+pub fn set_factory(env: &Env, factory: Address) {
+    env.storage()
+        .instance()
+        .set(&InstanceKey::Factory, &factory);
+}
+
+pub fn get_factory_opt(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&InstanceKey::Factory)
+}
+
 /// Read the stored CallRegistry address; panics if not set.
+#[allow(dead_code)]
 pub fn get_registry(env: &Env) -> Address {
     env.storage()
         .instance()

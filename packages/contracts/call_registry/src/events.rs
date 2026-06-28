@@ -1,5 +1,6 @@
 #![allow(deprecated)]
 #![allow(unused)]
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sdk::symbol_short;
 use soroban_sdk::{Address, Bytes, BytesN, Env, Symbol};

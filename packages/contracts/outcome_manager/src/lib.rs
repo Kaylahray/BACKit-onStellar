@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(deprecated)]
 
 mod auth;
 mod call_types;
@@ -10,8 +11,10 @@ mod storage;
 mod test;
 mod verification;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec};
+pub use storage::SignedOutcome;
+
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec};
 
 use auth::require_admin;
 use backit_shared::{is_valid_fee_bps, is_valid_outcome};
@@ -23,8 +26,8 @@ use events::{
     emit_outcome_submitted, emit_payout_claimed, emit_price_observation_submitted,
 };
 use storage::{
-    set_dispute_window, set_max_submission_delay, InstanceKey, OracleVote, Outcome,
-    PersistentKey, PriceObservation, SignedOutcome, TempKey,
+    set_dispute_window, set_max_submission_delay, InstanceKey, OracleVote, Outcome, PersistentKey,
+    PriceObservation, TempKey,
 };
 use verification::{build_message, verify_signature};
 
@@ -41,7 +44,11 @@ fn registry_resolve_call(
     end_price: i128,
 ) {
     let args = (call_id, outcome, end_price).into_val(env);
-    env.invoke_contract::<()>(registry, &Symbol::new(env, "resolve_call"), args);
+    let result: Result<Call, CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "resolve_call"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
 }
 
 fn registry_release_escrow(
@@ -52,15 +59,24 @@ fn registry_release_escrow(
     amount: i128,
 ) {
     let args = (call_id, to.clone(), amount).into_val(env);
-    env.invoke_contract::<()>(registry, &Symbol::new(env, "release_escrow"), args);
+    let result: Result<(), CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "release_escrow"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
 }
 
 fn registry_mark_settled(env: &Env, registry: &Address, call_id: u64) {
     let args = (call_id,).into_val(env);
-    env.invoke_contract::<()>(registry, &Symbol::new(env, "mark_settled"), args);
+    let result: Result<(), CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "mark_settled"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
 }
 
 /// Call `get_call(call_id)` on the CallRegistry and return the decoded Call.
+#[allow(dead_code)]
 fn registry_get_call(env: &Env, registry: &Address, call_id: u64) -> Call {
     let args = (call_id,).into_val(env);
     let result: Result<Call, CallRegistryError> =
@@ -72,6 +88,7 @@ fn registry_get_call(env: &Env, registry: &Address, call_id: u64) -> Call {
 }
 
 /// Call `get_staker_stake(call_id, staker, position)` on the CallRegistry.
+#[allow(dead_code)]
 fn registry_get_staker_stake(
     env: &Env,
     registry: &Address,
@@ -82,9 +99,27 @@ fn registry_get_staker_stake(
     let args = (call_id, staker.clone(), position).into_val(env);
     let result: Result<i128, CallRegistryError> =
         env.invoke_contract(registry, &Symbol::new(env, "get_staker_stake"), args);
+    result.unwrap_or_default()
+}
+
+/// Look up the deployed market address for `call_id` via the configured factory.
+fn factory_get_market(env: &Env, factory: &Address, call_id: u64) -> Address {
+    let args = (call_id,).into_val(env);
+    let result: Result<Address, CallRegistryError> =
+        env.invoke_contract(factory, &Symbol::new(env, "get_market"), args);
     match result {
-        Ok(stake) => stake,
-        Err(_) => 0,
+        Ok(addr) => addr,
+        Err(_) => soroban_sdk::panic_with_error!(env, OutcomeError::InvalidMarket),
+    }
+}
+
+/// When a factory is configured, ensure `registry` matches the factory's market for `call_id`.
+fn validate_market_registry(env: &Env, registry: &Address, call_id: u64) {
+    if let Some(factory) = storage::get_factory_opt(env) {
+        let expected = factory_get_market(env, &factory, call_id);
+        if expected != *registry {
+            soroban_sdk::panic_with_error!(env, OutcomeError::InvalidMarket);
+        }
     }
 }
 
@@ -187,7 +222,6 @@ fn compute_payout_parts(
     (staker_fee_share, payout)
 }
 
-
 // ─── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -210,10 +244,10 @@ impl OutcomeManager {
 
         admin.require_auth();
 
-        if quorum == 0 || quorum > oracles.len() as u32 {
+        if quorum == 0 || quorum > oracles.len() {
             soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidQuorum);
         }
-        if oracles.len() as u32 > MAX_ORACLES {
+        if oracles.len() > MAX_ORACLES {
             soroban_sdk::panic_with_error!(&env, OutcomeError::MaxOraclesReached);
         }
         if !is_valid_fee_bps(fee_bps) {
@@ -226,14 +260,22 @@ impl OutcomeManager {
         }
 
         env.storage().instance().set(&InstanceKey::Admin, &admin);
-        env.storage().instance().set(&InstanceKey::Oracles, &oracle_map);
-        env.storage().instance().set(&InstanceKey::OracleList, &oracles);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::Oracles, &oracle_map);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::OracleList, &oracles);
         env.storage().instance().set(&InstanceKey::Quorum, &quorum);
-        env.storage().instance().set(&InstanceKey::FeeCollector, &fee_collector);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::FeeCollector, &fee_collector);
         env.storage().instance().set(&InstanceKey::FeeBps, &fee_bps);
         set_dispute_window(&env, dispute_window_secs);
         set_max_submission_delay(&env, 86400);
-        env.storage().instance().set(&InstanceKey::Version, &CONTRACT_VERSION);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::Version, &CONTRACT_VERSION);
     }
 
     pub fn add_oracle(env: Env, oracle: BytesN<32>) {
@@ -248,13 +290,17 @@ impl OutcomeManager {
         if oracles.contains_key(oracle.clone()) {
             return;
         }
-        if oracle_list.len() as u32 >= MAX_ORACLES {
+        if oracle_list.len() >= MAX_ORACLES {
             soroban_sdk::panic_with_error!(&env, OutcomeError::MaxOraclesReached);
         }
         oracles.set(oracle.clone(), true);
         oracle_list.push_back(oracle);
-        env.storage().instance().set(&InstanceKey::Oracles, &oracles);
-        env.storage().instance().set(&InstanceKey::OracleList, &oracle_list);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::Oracles, &oracles);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::OracleList, &oracle_list);
     }
 
     pub fn remove_oracle(env: Env, oracle: BytesN<32>) {
@@ -273,14 +319,18 @@ impl OutcomeManager {
                 filtered.push_back(existing);
             }
         }
-        env.storage().instance().set(&InstanceKey::Oracles, &oracles);
-        env.storage().instance().set(&InstanceKey::OracleList, &filtered);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::Oracles, &oracles);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::OracleList, &filtered);
     }
 
     pub fn set_quorum(env: Env, quorum: u32) {
         require_admin(&env);
         let oracles = get_oracles(&env);
-        if quorum == 0 || quorum > oracles.len() as u32 {
+        if quorum == 0 || quorum > oracles.len() {
             soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidQuorum);
         }
         env.storage().instance().set(&InstanceKey::Quorum, &quorum);
@@ -288,7 +338,9 @@ impl OutcomeManager {
 
     pub fn set_admin(env: Env, new_admin: Address) {
         require_admin(&env);
-        env.storage().instance().set(&InstanceKey::Admin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::Admin, &new_admin);
     }
 
     pub fn set_max_submission_delay(env: Env, new_delay: u64) {
@@ -305,12 +357,17 @@ impl OutcomeManager {
     /// Default: 500 (5%). Submissions deviating more than this are rejected.
     pub fn set_sdex_threshold(env: Env, new_threshold: u32) {
         require_admin(&env);
-        env.storage().instance().set(&InstanceKey::SdexThresholdBps, &new_threshold);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::SdexThresholdBps, &new_threshold);
         emit_admin_params_changed(&env, new_threshold as u64);
     }
 
     pub fn get_sdex_threshold(env: Env) -> u32 {
-        env.storage().instance().get(&InstanceKey::SdexThresholdBps).unwrap_or(500)
+        env.storage()
+            .instance()
+            .get(&InstanceKey::SdexThresholdBps)
+            .unwrap_or(500)
     }
 
     /// Query the SDEX midpoint price for a pair from the on-chain orderbook.
@@ -318,7 +375,11 @@ impl OutcomeManager {
     /// NOTE: In Soroban, direct SDEX orderbook queries require a host function
     /// or a helper oracle contract. This returns None (graceful degradation)
     /// when the query cannot be satisfied, as per the acceptance criteria.
-    pub fn query_sdex_midpoint(_env: Env, _selling_asset: Address, _buying_asset: Address) -> Option<i128> {
+    pub fn query_sdex_midpoint(
+        _env: Env,
+        _selling_asset: Address,
+        _buying_asset: Address,
+    ) -> Option<i128> {
         // Soroban does not yet expose a native host function for SDEX orderbook
         // queries within a single transaction budget. When the Stellar protocol
         // exposes this capability, replace the body with the actual host call.
@@ -340,18 +401,83 @@ impl OutcomeManager {
         is_paused(&env)
     }
 
+    /// Store the default registry / market address (admin only).
+    ///
+    /// Used by `finalize_outcome` when the dispute-window path is active.
+    pub fn set_registry(env: Env, registry: Address) {
+        require_admin(&env);
+        storage::set_registry(&env, registry);
+    }
+
+    /// Store the prediction market factory address (admin only).
+    ///
+    /// **Design decision:** a single shared `outcome_manager` instance serves all
+    /// factory-deployed markets. Oracle quorum state is keyed by global `call_id`,
+    /// while escrow lives in per-market contract instances. Per-market outcome
+    /// managers would isolate oracle config but multiply deployment and admin cost.
+    pub fn set_factory(env: Env, factory: Address) {
+        require_admin(&env);
+        storage::set_factory(&env, factory);
+    }
+
+    /// Return the configured factory address, if any.
+    pub fn get_factory(env: Env) -> Option<Address> {
+        storage::get_factory_opt(&env)
+    }
+
+    /// Resolve a market contract address from the configured factory.
+    pub fn resolve_market_address(env: Env, call_id: u64) -> Address {
+        let factory = match storage::get_factory_opt(&env) {
+            Some(factory) => factory,
+            None => soroban_sdk::panic_with_error!(&env, OutcomeError::FactoryNotSet),
+        };
+        factory_get_market(&env, &factory, call_id)
+    }
+
+    /// Submit an oracle outcome, resolving the market address from the factory.
+    pub fn submit_outcome_for_market(env: Env, signed: SignedOutcome, call_end_ts: u64) {
+        let registry = Self::resolve_market_address(env.clone(), signed.call_id);
+        Self::submit_outcome(env, registry, signed, call_end_ts);
+    }
+
+    /// Claim payout, resolving the market address from the factory.
+    pub fn claim_payout_for_market(
+        env: Env,
+        call_id: u64,
+        staker: Address,
+        staker_winning_stake: i128,
+        total_winning_stake: i128,
+        total_losing_stake: i128,
+    ) {
+        let registry = Self::resolve_market_address(env.clone(), call_id);
+        Self::claim_payout(
+            env,
+            registry,
+            call_id,
+            staker,
+            staker_winning_stake,
+            total_winning_stake,
+            total_losing_stake,
+        );
+    }
 
     pub fn submit_outcome(env: Env, registry: Address, signed: SignedOutcome, call_end_ts: u64) {
         if is_paused(&env) {
             soroban_sdk::panic_with_error!(&env, OutcomeError::ContractPaused);
         }
 
+        validate_market_registry(&env, &registry, signed.call_id);
+
         let oracles = get_oracles(&env);
         if !oracles.contains_key(signed.oracle_pubkey.clone()) {
             soroban_sdk::panic_with_error!(&env, OutcomeError::UnauthorizedOracle);
         }
 
-        if env.storage().instance().has(&InstanceKey::FinalOutcome(signed.call_id)) {
+        if env
+            .storage()
+            .instance()
+            .has(&InstanceKey::FinalOutcome(signed.call_id))
+        {
             soroban_sdk::panic_with_error!(&env, OutcomeError::AlreadySettled);
         }
 
@@ -386,16 +512,23 @@ impl OutcomeManager {
         let sdex_midpoint: Option<i128> = None; // host function not yet available
         if let Some(sdex_price) = sdex_midpoint {
             if sdex_price > 0 {
-                let threshold_bps: u32 = env.storage().instance()
-                    .get(&InstanceKey::SdexThresholdBps).unwrap_or(500);
+                let threshold_bps: u32 = env
+                    .storage()
+                    .instance()
+                    .get(&InstanceKey::SdexThresholdBps)
+                    .unwrap_or(500);
                 let diff = (signed.price - sdex_price).abs();
-                let deviation_bps = diff.checked_mul(10000).unwrap_or(i128::MAX)
-                    / sdex_price;
+                let deviation_bps = diff.checked_mul(10000).unwrap_or(i128::MAX) / sdex_price;
                 if deviation_bps > threshold_bps as i128 {
                     // Emit warning event then reject
                     env.events().publish(
                         ("outcome_manager", "PriceDeviationWarning"),
-                        (signed.call_id, signed.price, sdex_price, deviation_bps as u32),
+                        (
+                            signed.call_id,
+                            signed.price,
+                            sdex_price,
+                            deviation_bps as u32,
+                        ),
                     );
                     soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidOutcome);
                 }
@@ -404,7 +537,9 @@ impl OutcomeManager {
 
         let outcome_hash: BytesN<32> = env.crypto().sha256(&message).into();
 
-        env.storage().temporary().set(&submission_key, &outcome_hash);
+        env.storage()
+            .temporary()
+            .set(&submission_key, &outcome_hash);
 
         let vote_key = PersistentKey::Votes(signed.call_id);
         let mut votes_for_call: Vec<OracleVote> = env
@@ -447,10 +582,15 @@ impl OutcomeManager {
             .instance()
             .set(&InstanceKey::FinalOutcome(outcome.call_id), &outcome);
 
-        registry_resolve_call(env, registry, outcome.call_id, outcome.outcome, outcome.price);
+        registry_resolve_call(
+            env,
+            registry,
+            outcome.call_id,
+            outcome.outcome,
+            outcome.price,
+        );
         emit_outcome_finalized(env, outcome.call_id, outcome.outcome, outcome.price);
     }
-
 
     /// Claim a pro-rata payout for a winning staker.
     ///
@@ -511,9 +651,10 @@ impl OutcomeManager {
         id_input.append(&staker.clone().to_xdr(&env));
         let balance_id: BytesN<32> = env.crypto().sha256(&id_input).into();
 
-        env.storage()
-            .instance()
-            .set(&InstanceKey::ClaimableBalanceId(call_id, staker.clone()), &balance_id);
+        env.storage().instance().set(
+            &InstanceKey::ClaimableBalanceId(call_id, staker.clone()),
+            &balance_id,
+        );
 
         if staker_fee_share > 0 {
             registry_release_escrow(&env, &registry, call_id, &fee_collector, staker_fee_share);
@@ -588,9 +729,10 @@ impl OutcomeManager {
             id_input.append(&Bytes::from_slice(&env, &(i as u64).to_be_bytes()));
             let balance_id: BytesN<32> = env.crypto().sha256(&id_input).into();
 
-            env.storage()
-                .instance()
-                .set(&InstanceKey::ClaimableBalanceId(call_id, staker.clone()), &balance_id);
+            env.storage().instance().set(
+                &InstanceKey::ClaimableBalanceId(call_id, staker.clone()),
+                &balance_id,
+            );
 
             // Mark claimed BEFORE external calls (reentrancy guard)
             env.storage().instance().set(&claimed_key, &true);
@@ -605,11 +747,16 @@ impl OutcomeManager {
         }
 
         if aggregated_fee_share > 0 {
-            registry_release_escrow(&env, &registry, call_id, &fee_collector, aggregated_fee_share);
+            registry_release_escrow(
+                &env,
+                &registry,
+                call_id,
+                &fee_collector,
+                aggregated_fee_share,
+            );
             emit_fee_collected(&env, call_id, aggregated_fee_share, &fee_collector);
         }
     }
-
 
     pub fn batch_claim_payouts(
         env: Env,
@@ -674,14 +821,24 @@ impl OutcomeManager {
         }
 
         if aggregated_fee_share > 0 {
-            registry_release_escrow(&env, &registry, call_id, &fee_collector, aggregated_fee_share);
+            registry_release_escrow(
+                &env,
+                &registry,
+                call_id,
+                &fee_collector,
+                aggregated_fee_share,
+            );
             emit_fee_collected(&env, call_id, aggregated_fee_share, &fee_collector);
         }
     }
 
     pub fn mark_settled(env: Env, registry: Address, call_id: u64) {
         require_admin(&env);
-        if !env.storage().instance().has(&InstanceKey::FinalOutcome(call_id)) {
+        if !env
+            .storage()
+            .instance()
+            .has(&InstanceKey::FinalOutcome(call_id))
+        {
             soroban_sdk::panic_with_error!(&env, OutcomeError::CallNotFinalized);
         }
         registry_mark_settled(&env, &registry, call_id);
@@ -715,7 +872,13 @@ impl OutcomeManager {
             .instance()
             .set(&InstanceKey::FinalOutcome(call_id), &pending);
         let registry = get_registry(&env);
-        registry_resolve_call(&env, &registry, pending.call_id, pending.outcome, pending.price);
+        registry_resolve_call(
+            &env,
+            &registry,
+            pending.call_id,
+            pending.outcome,
+            pending.price,
+        );
         emit_outcome_finalized(&env, call_id, pending.outcome, pending.price);
     }
 
@@ -758,14 +921,20 @@ impl OutcomeManager {
     }
 
     pub fn get_outcome(env: Env, call_id: u64) -> Outcome {
-        match env.storage().instance().get(&InstanceKey::FinalOutcome(call_id)) {
+        match env
+            .storage()
+            .instance()
+            .get(&InstanceKey::FinalOutcome(call_id))
+        {
             Some(outcome) => outcome,
             None => soroban_sdk::panic_with_error!(&env, OutcomeError::CallNotSettled),
         }
     }
 
     pub fn has_claimed(env: Env, call_id: u64, staker: Address) -> bool {
-        env.storage().instance().has(&InstanceKey::Claimed(call_id, staker))
+        env.storage()
+            .instance()
+            .has(&InstanceKey::Claimed(call_id, staker))
     }
 
     /// Return the stored claimable balance ID for a staker, if one exists.
@@ -792,7 +961,7 @@ impl OutcomeManager {
     }
 
     pub fn get_oracle_count(env: Env) -> u32 {
-        Self::get_oracles(env).len() as u32
+        Self::get_oracles(env).len()
     }
 
     pub fn get_votes(env: Env, call_id: u64) -> Vec<OracleVote> {
@@ -803,7 +972,7 @@ impl OutcomeManager {
     }
 
     pub fn get_vote_count(env: Env, call_id: u64) -> u32 {
-        Self::get_votes(env, call_id).len() as u32
+        Self::get_votes(env, call_id).len()
     }
 
     pub fn version(env: Env) -> u32 {
@@ -828,7 +997,9 @@ impl OutcomeManager {
         let new_version = old_version + 1;
 
         env.deployer().update_current_contract_wasm(new_wasm_hash);
-        env.storage().instance().set(&InstanceKey::Version, &new_version);
+        env.storage()
+            .instance()
+            .set(&InstanceKey::Version, &new_version);
         emit_contract_upgraded(&env, old_version, new_version, &admin);
     }
 
@@ -847,7 +1018,10 @@ impl OutcomeManager {
         let mut raw = Bytes::from_slice(&env, b"twap_obs:");
         raw.append(&Bytes::from_slice(&env, &call_id.to_be_bytes()));
         raw.append(&Bytes::from_slice(&env, &observation.price.to_be_bytes()));
-        raw.append(&Bytes::from_slice(&env, &observation.timestamp.to_be_bytes()));
+        raw.append(&Bytes::from_slice(
+            &env,
+            &observation.timestamp.to_be_bytes(),
+        ));
         verify_signature(&env, &oracle_pubkey, &signature, &raw);
 
         let key = TempKey::PriceObservations(call_id);
