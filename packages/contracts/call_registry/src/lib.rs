@@ -488,7 +488,7 @@ impl CallRegistry {
         emit_call_metadata_updated(
             &env,
             call_id,
-            &creator,
+        &creator,
             &old_hash,
             &new_metadata_hash,
             call.metadata_version,
@@ -945,7 +945,14 @@ impl CallRegistry {
         voting_end_ledger: u32,
         proposer_stake_volume: i128,
     ) -> u64 {
-        governance::propose_change(&env, proposer, parameter, new_value_bytes, voting_end_ledger, proposer_stake_volume)
+        governance::propose_change(
+            &env,
+            proposer,
+            parameter,
+            new_value_bytes,
+            voting_end_ledger,
+            proposer_stake_volume,
+        )
     }
 
     /// Cast a vote on a governance proposal. Voting power = voter's stake volume.
@@ -975,7 +982,10 @@ impl CallRegistry {
     }
 
     /// Update governance configuration (admin only).
-    pub fn set_governance_config(env: Env, cfg: governance::GovernanceConfig) -> Result<(), CallRegistryError> {
+    pub fn set_governance_config(
+        env: Env,
+        cfg: governance::GovernanceConfig,
+    ) -> Result<(), CallRegistryError> {
         let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
         governance::set_governance_config(&env, &config.admin, cfg);
         Ok(())

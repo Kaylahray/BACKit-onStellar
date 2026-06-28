@@ -56,4 +56,8 @@ pub enum OutcomeError {
     RegistryNotSet = 25,
     /// `dispute_outcome` was called after the dispute window has already closed.
     DisputeWindowExpired = 26,
+    /// The factory address has not been set in instance storage.
+    FactoryNotSet = 27,
+    /// The market address does not match the factory's registry for this call_id.
+    InvalidMarket = 28,
 }

@@ -1,6 +1,8 @@
 #![cfg(test)]
 #![allow(deprecated)]
 #![allow(unused)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::len_zero)]
 
 extern crate std;
 
@@ -1648,10 +1650,7 @@ mod call_registry {
         env.ledger().set_timestamp(606801);
 
         let result = client.try_claim_expired_refund(&staker, &call.id);
-        assert!(
-            result.is_err(),
-            "should fail when call is settled"
-        );
+        assert!(result.is_err(), "should fail when call is settled");
     }
 
     #[test]
@@ -1671,10 +1670,7 @@ mod call_registry {
 
         // Second claim should fail
         let result = client.try_claim_expired_refund(&staker, &call.id);
-        assert!(
-            result.is_err(),
-            "second claim should fail"
-        );
+        assert!(result.is_err(), "second claim should fail");
     }
 
     // ── 3-outcome market tests ───────────────────────────────────────────────
@@ -2559,7 +2555,6 @@ mod call_registry {
         assert!(usage.cpu <= GET_CALL_STAKERS_BUDGET_CPU);
         assert!(usage.mem <= GET_CALL_STAKERS_BUDGET_MEM);
     }
-
 }
 
 // ── Native XLM staking tests ──────────────────────────────────────────────────
@@ -2888,7 +2883,6 @@ mod native_xlm {
         assert_eq!(up_stake, half_xlm);
         assert_eq!(down_stake, quarter_xlm);
     }
-
 }
 
 // ── SEP-10 tests ─────────────────────────────────────────────────────────────

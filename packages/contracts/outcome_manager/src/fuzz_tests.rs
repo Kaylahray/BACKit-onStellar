@@ -1,10 +1,21 @@
 #![cfg(test)]
 
-fn compute_payout(staker_winning_stake: i128, total_winning_stake: i128, total_losing_stake: i128, fee_bps: u32) -> Option<i128> {
-    if total_winning_stake <= 0 { return None; }
-    let total_fee = total_losing_stake.checked_mul(fee_bps as i128)?.checked_div(10000)?;
+fn compute_payout(
+    staker_winning_stake: i128,
+    total_winning_stake: i128,
+    total_losing_stake: i128,
+    fee_bps: u32,
+) -> Option<i128> {
+    if total_winning_stake <= 0 {
+        return None;
+    }
+    let total_fee = total_losing_stake
+        .checked_mul(fee_bps as i128)?
+        .checked_div(10000)?;
     let net_losing = total_losing_stake.checked_sub(total_fee)?;
-    let prize = staker_winning_stake.checked_mul(net_losing)?.checked_div(total_winning_stake)?;
+    let prize = staker_winning_stake
+        .checked_mul(net_losing)?
+        .checked_div(total_winning_stake)?;
     staker_winning_stake.checked_add(prize)
 }
 
@@ -33,7 +44,10 @@ fn fuzz_sum_of_payouts_equals_pool_minus_fee() {
     let fee_bps: u32 = 200;
     let fee = total_losing * fee_bps as i128 / 10000;
     let expected = total_winning + total_losing - fee;
-    let sum: i128 = stakes.iter().filter_map(|&s| compute_payout(s, total_winning, total_losing, fee_bps)).sum();
+    let sum: i128 = stakes
+        .iter()
+        .filter_map(|&s| compute_payout(s, total_winning, total_losing, fee_bps))
+        .sum();
     assert!((sum - expected).abs() <= stakes.len() as i128);
 }
 
@@ -81,6 +95,9 @@ fn fuzz_concurrent_claims() {
     let fee_bps = 300u32;
     let fee = tl * fee_bps as i128 / 10000;
     let expected = tw + tl - fee;
-    let sum: i128 = stakes.iter().filter_map(|&s| compute_payout(s, tw, tl, fee_bps)).sum();
+    let sum: i128 = stakes
+        .iter()
+        .filter_map(|&s| compute_payout(s, tw, tl, fee_bps))
+        .sum();
     assert!((sum - expected).abs() <= stakes.len() as i128);
 }
