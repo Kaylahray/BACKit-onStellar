@@ -190,8 +190,7 @@ impl CallRegistry {
         Ok(())
     }
 
-    /// Test-only: register the XLM SAC address so is_native_xlm works in tests.
-    #[cfg(test)]
+    /// Register the XLM SAC address so `is_native_xlm` works in tests.
     pub fn set_xlm_sac_address(env: Env, xlm_sac: Address) {
         env.storage()
             .instance()
@@ -946,7 +945,14 @@ impl CallRegistry {
         voting_end_ledger: u32,
         proposer_stake_volume: i128,
     ) -> u64 {
-        governance::propose_change(&env, proposer, parameter, new_value_bytes, voting_end_ledger, proposer_stake_volume)
+        governance::propose_change(
+            &env,
+            proposer,
+            parameter,
+            new_value_bytes,
+            voting_end_ledger,
+            proposer_stake_volume,
+        )
     }
 
     /// Cast a vote on a governance proposal. Voting power = voter's stake volume.
@@ -976,7 +982,10 @@ impl CallRegistry {
     }
 
     /// Update governance configuration (admin only).
-    pub fn set_governance_config(env: Env, cfg: governance::GovernanceConfig) -> Result<(), CallRegistryError> {
+    pub fn set_governance_config(
+        env: Env,
+        cfg: governance::GovernanceConfig,
+    ) -> Result<(), CallRegistryError> {
         let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
         governance::set_governance_config(&env, &config.admin, cfg);
         Ok(())

@@ -4,7 +4,7 @@
 //! Voting power = user's historical stake volume (snapshot at proposal creation).
 //! Proposals pass when votes_for > governance_quorum_bps of total platform stake.
 
-use soroban_sdk::{contracttype, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -42,15 +42,21 @@ impl GovernanceConfig {
     pub fn default() -> Self {
         GovernanceConfig {
             proposal_threshold: 1000_0000000, // 1000 XLM
-            governance_quorum_bps: 100,        // 1%
-            voting_period_ledgers: 17280,      // ~1 day at 5s/ledger
+            governance_quorum_bps: 100,       // 1%
+            voting_period_ledgers: 17280,     // ~1 day at 5s/ledger
         }
     }
 }
 
 fn next_proposal_id(env: &Env) -> u64 {
-    let id: u64 = env.storage().instance().get(&GovKey::ProposalCounter).unwrap_or(0);
-    env.storage().instance().set(&GovKey::ProposalCounter, &(id + 1));
+    let id: u64 = env
+        .storage()
+        .instance()
+        .get(&GovKey::ProposalCounter)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&GovKey::ProposalCounter, &(id + 1));
     id + 1
 }
 
@@ -88,7 +94,9 @@ pub fn propose_change(
         votes_against: 0,
         executed: false,
     };
-    env.storage().instance().set(&GovKey::Proposal(id), &proposal);
+    env.storage()
+        .instance()
+        .set(&GovKey::Proposal(id), &proposal);
     env.events().publish(
         ("governance", "ProposalCreated"),
         (id, proposer, parameter, voting_end_ledger),
@@ -117,7 +125,9 @@ pub fn vote(env: &Env, voter: Address, proposal_id: u64, support: bool, voter_st
     } else {
         proposal.votes_against += voter_stake_volume;
     }
-    env.storage().instance().set(&GovKey::Proposal(proposal_id), &proposal);
+    env.storage()
+        .instance()
+        .set(&GovKey::Proposal(proposal_id), &proposal);
     env.storage().instance().set(&voted_key, &true);
     env.events().publish(
         ("governance", "VoteCast"),
@@ -156,13 +166,16 @@ pub fn execute_proposal(
 
     if proposal.votes_for > quorum {
         proposal.executed = true;
-        env.storage().instance().set(&GovKey::Proposal(proposal_id), &proposal);
+        env.storage()
+            .instance()
+            .set(&GovKey::Proposal(proposal_id), &proposal);
         env.events().publish(
             ("governance", "ProposalExecuted"),
             (proposal_id, proposal.parameter.clone()),
         );
     } else {
-        env.events().publish(("governance", "ProposalRejected"), (proposal_id,));
+        env.events()
+            .publish(("governance", "ProposalRejected"), (proposal_id,));
         panic!("quorum not met");
     }
     proposal
@@ -184,7 +197,11 @@ pub fn get_active_proposals(env: &Env) -> Vec<GovernanceProposal> {
     let current = env.ledger().sequence();
     let mut result = Vec::new(env);
     for id in 1..=count {
-        if let Some(p) = env.storage().instance().get::<_, GovernanceProposal>(&GovKey::Proposal(id)) {
+        if let Some(p) = env
+            .storage()
+            .instance()
+            .get::<_, GovernanceProposal>(&GovKey::Proposal(id))
+        {
             if !p.executed && current <= p.voting_end_ledger {
                 result.push_back(p);
             }
@@ -195,5 +212,7 @@ pub fn get_active_proposals(env: &Env) -> Vec<GovernanceProposal> {
 
 pub fn set_governance_config(env: &Env, admin: &Address, cfg: GovernanceConfig) {
     admin.require_auth();
-    env.storage().instance().set(&GovKey::GovernanceConfig, &cfg);
+    env.storage()
+        .instance()
+        .set(&GovKey::GovernanceConfig, &cfg);
 }
