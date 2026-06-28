@@ -40,6 +40,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-contracts-
 
+      - name: Build prediction_market WASM for factory tests
+        run: |
+          cd packages/contracts
+          cargo build --release --target wasm32-unknown-unknown -p prediction-market
+
       - name: Run Cargo Test
         run: |
           cd packages/contracts

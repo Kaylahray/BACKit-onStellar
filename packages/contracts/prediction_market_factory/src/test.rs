@@ -13,12 +13,14 @@ use soroban_sdk::{
 };
 
 fn install_market_wasm(env: &Env) -> BytesN<32> {
-    let release_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/wasm32-unknown-unknown/release");
-
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let release_unknown = workspace_root.join("target/wasm32-unknown-unknown/release");
+    let release_v1 = workspace_root.join("target/wasm32v1-none/release");
     let candidates = [
-        release_dir.join("prediction_market.optimized.wasm"),
-        release_dir.join("prediction_market.wasm"),
+        release_unknown.join("prediction_market.optimized.wasm"),
+        release_unknown.join("prediction_market.wasm"),
+        release_v1.join("prediction_market.optimized.wasm"),
+        release_v1.join("prediction_market.wasm"),
     ];
 
     let wasm_path = candidates
@@ -28,8 +30,8 @@ fn install_market_wasm(env: &Env) -> BytesN<32> {
             panic!(
                 "missing prediction_market WASM — run:\n  \
                  cargo build --release --target wasm32-unknown-unknown -p prediction-market\n  \
-                 stellar contract optimize --wasm {}/prediction_market.wasm",
-                release_dir.display()
+                 stellar contract optimize --wasm {}/target/wasm32-unknown-unknown/release/prediction_market.wasm",
+                workspace_root.display()
             )
         });
 
