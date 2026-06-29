@@ -68,6 +68,10 @@ pub enum InstanceKey {
 #[derive(Clone)]
 pub enum PersistentKey {
     Votes(u64),
+    /// Pending oracle removal: value is the effective_ledger at which removal takes effect.
+    PendingOracleRemoval(BytesN<32>),
+    /// Pending oracle addition: reserved for scheduled oracle onboarding.
+    PendingOracleAdditions(BytesN<32>),
 }
 
 /// A single price data point submitted by an oracle for TWAP calculation
