@@ -14,6 +14,7 @@ import { useWalletContext } from "./WalletContext";
 import ClaimPayout from "./ClaimPayout";
 import PriceAlertToggle from "./PriceAlertToggle";
 import BookmarkButton from "./BookmarkButton";
+import ClosingAlertToggle from "./ClosingAlertToggle";
 
 interface UserPosition {
   stake: number;
@@ -30,13 +31,12 @@ export default function CallDetail({ call }: { call: CallDetailData }) {
   const { publicKey } = useWalletContext();
 
   useEffect(() => {
-    if (call.resolved && publicKey) {
-      fetch(`/api/calls/${call.id}/position?address=${publicKey}`)
-        .then((res) => res.ok ? res.json() : null)
-        .then((data) => data && setUserPosition(data))
-        .catch(() => null);
-    }
-  }, [call.id, call.resolved, publicKey]);
+    if (!publicKey) return;
+    fetch(`/api/calls/${call.id}/position?address=${publicKey}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => data && setUserPosition(data))
+      .catch(() => null);
+  }, [call.id, publicKey]);
 
   useEffect(() => {
     // Fetch odds from backend
@@ -76,7 +76,15 @@ export default function CallDetail({ call }: { call: CallDetailData }) {
         <div className="lg:col-span-2 space-y-8">
           <CallDetailHeader call={call} timeLeft={timeLeft} odds={odds} />
 
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <ClosingAlertToggle
+              callId={call.id}
+              walletAddress={publicKey ?? undefined}
+              hasStakeOrBookmark={
+                !!userPosition ||
+                !!((call as { isBookmarked?: boolean }).isBookmarked)
+              }
+            />
             <BookmarkButton
               callId={String(call.id)}
               initialBookmarked={
