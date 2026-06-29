@@ -13,6 +13,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useWalletContext } from "./WalletContext";
 import ClaimPayout from "./ClaimPayout";
 import PriceAlertToggle from "./PriceAlertToggle";
+import BookmarkButton from "./BookmarkButton";
 
 interface UserPosition {
   stake: number;
@@ -74,6 +75,18 @@ export default function CallDetail({ call }: { call: CallDetailData }) {
         {/* Left column - Main content */}
         <div className="lg:col-span-2 space-y-8">
           <CallDetailHeader call={call} timeLeft={timeLeft} odds={odds} />
+
+          <div className="flex justify-end">
+            <BookmarkButton
+              callId={String(call.id)}
+              initialBookmarked={
+                (call as { isBookmarked?: boolean }).isBookmarked ?? false
+              }
+              initialCount={
+                (call as { bookmarkCount?: number }).bookmarkCount ?? 0
+              }
+            />
+          </div>
 
           {/* Historical Price Chart */}
           <PriceChart
