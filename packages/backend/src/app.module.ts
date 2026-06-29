@@ -1,4 +1,6 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -30,6 +32,8 @@ import { LoggerModule } from './common/logger/logger.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     CacheModule.register({ isGlobal: true }),
+    ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot(),
     LoggerModule,
     TypeOrmModule.forRoot({
       type: 'postgres',
