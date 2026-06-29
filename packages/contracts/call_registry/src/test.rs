@@ -3050,4 +3050,90 @@ mod sep10_tests {
         let user = Address::generate(&env);
         assert_eq!(client.get_sep10_home_domain(&user), None);
     }
+
+    // ── Duration enforcement tests ─────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "call duration exceeds maximum allowed")]
+    fn test_create_call_exceeds_max_duration_panics() {
+        let (env, client, admin, _) = setup();
+        let creator = Address::generate(&env);
+        let token = env.register(MockToken, ());
+        let token_addr = Address::from_contract_id(&token);
+
+        client.whitelist_token(&token_addr);
+        env.ledger().with_mut(|l| l.timestamp = 1000);
+
+        // 1 day max, but call runs 2 days → should panic
+        client.set_max_duration(&admin, &86_400u64);
+
+        let end_ts: u64 = 1000 + 2 * 86_400; // 2 days from now
+        let ipfs_cid = Bytes::from_slice(&env, b"QmTest");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let pair_id = Bytes::from_slice(&env, b"BTC/USDC");
+
+        client.create_call(
+            &creator,
+            &crate::types::CallInitArgs {
+                stake_token: token_addr,
+                stake_amount: TEST_MIN_STAKE,
+                start_price: TEST_START_PRICE,
+                end_ts,
+                token_address: Address::generate(&env),
+                pair_id,
+                ipfs_cid,
+                metadata_hash,
+                condition: crate::types::ConditionType::TargetAbove(100_000_000),
+                outcome_count: 2,
+            },
+        );
+    }
+
+    #[test]
+    fn test_create_call_at_exact_max_duration_succeeds() {
+        let (env, client, admin, _) = setup();
+        let creator = Address::generate(&env);
+        let token = env.register(MockToken, ());
+        let token_addr = Address::from_contract_id(&token);
+
+        client.whitelist_token(&token_addr);
+        env.ledger().with_mut(|l| l.timestamp = 1000);
+
+        // 1 day max, call ends exactly at 1 day → should succeed
+        client.set_max_duration(&admin, &86_400u64);
+
+        let end_ts: u64 = 1000 + 86_400;
+        let ipfs_cid = Bytes::from_slice(&env, b"QmTest");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let pair_id = Bytes::from_slice(&env, b"BTC/USDC");
+
+        let call = client.create_call(
+            &creator,
+            &crate::types::CallInitArgs {
+                stake_token: token_addr,
+                stake_amount: TEST_MIN_STAKE,
+                start_price: TEST_START_PRICE,
+                end_ts,
+                token_address: Address::generate(&env),
+                pair_id,
+                ipfs_cid,
+                metadata_hash,
+                condition: crate::types::ConditionType::TargetAbove(100_000_000),
+                outcome_count: 2,
+            },
+        );
+        assert_eq!(call.end_ts, end_ts);
+    }
+
+    #[test]
+    fn test_admin_can_update_max_duration() {
+        let (env, client, admin, _) = setup();
+
+        // Default is 30 days
+        assert_eq!(client.get_max_duration(), 2_592_000u64);
+
+        // Admin updates to 7 days
+        client.set_max_duration(&admin, &604_800u64);
+        assert_eq!(client.get_max_duration(), 604_800u64);
+    }
 }

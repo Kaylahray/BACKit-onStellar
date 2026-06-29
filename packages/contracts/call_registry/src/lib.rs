@@ -74,6 +74,7 @@ fn transfer_token(env: &Env, stake_token: &Address, from: &Address, to: &Address
 }
 
 mod admin;
+mod duration;
 mod errors;
 mod events;
 mod withdrawal;
@@ -254,6 +255,7 @@ impl CallRegistry {
         if end_ts <= current_timestamp {
             return Err(CallRegistryError::InvalidEndTime);
         }
+        duration::assert_duration_within_limit(&env, end_ts);
 
         let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
         // Native XLM (sentinel address) is always allowed; SAC tokens must be whitelisted.
@@ -779,6 +781,17 @@ impl CallRegistry {
     /// Pass `0` to disable the cutoff.
     pub fn set_staking_cutoff(env: Env, new_cutoff: u64) {
         admin::set_staking_cutoff(env, new_cutoff);
+    }
+
+    /// Set the maximum allowed call duration in seconds (admin only).
+    /// Defaults to 30 days (2_592_000 s). Emits AdminParamsChanged.
+    pub fn set_max_duration(env: Env, admin: Address, max_duration_secs: u64) {
+        duration::set_max_duration(&env, admin, max_duration_secs);
+    }
+
+    /// Get the current maximum allowed call duration in seconds.
+    pub fn get_max_duration(env: Env) -> u64 {
+        duration::get_max_duration(&env)
     }
 
     /// Resolve a call with an outcome (outcome_manager only).
