@@ -128,3 +128,74 @@ export async function markNotificationsRead(
   if (!res.ok) throw new Error("Failed to mark notifications as read");
   return res.json();
 }
+
+// ── Bookmarks (#374) ─────────────────────────────────────────────────────────
+
+export interface BookmarkRecord {
+  id: string;
+  userAddress: string;
+  callId: string;
+  createdAt: string;
+  // Joined call data returned by GET /users/:address/bookmarks
+  call?: Record<string, unknown> & { id: string };
+}
+
+export interface PaginatedBookmarks {
+  data: BookmarkRecord[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** Add a bookmark for `address` on `callId`. POST /users/:address/bookmarks */
+export async function addBookmark(
+  address: string,
+  callId: string
+): Promise<void> {
+  const res = await fetch(
+    `${BACKEND_URL}/users/${encodeURIComponent(address)}/bookmarks`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callId }),
+    }
+  );
+  // 409 means it is already bookmarked — treat as success (idempotent toggle).
+  if (!res.ok && res.status !== 409) {
+    throw new Error("Failed to add bookmark");
+  }
+}
+
+/** Remove a bookmark. DELETE /users/:address/bookmarks/:callId */
+export async function removeBookmark(
+  address: string,
+  callId: string
+): Promise<void> {
+  const res = await fetch(
+    `${BACKEND_URL}/users/${encodeURIComponent(address)}/bookmarks/${encodeURIComponent(callId)}`,
+    { method: "DELETE" }
+  );
+  // 404 means it was not bookmarked — treat as success (idempotent toggle).
+  if (!res.ok && res.status !== 404) {
+    throw new Error("Failed to remove bookmark");
+  }
+}
+
+/** Paginated list of a user's bookmarked calls (with joined call data). */
+export async function fetchBookmarks(
+  address: string,
+  page = 1,
+  limit = 20
+): Promise<PaginatedBookmarks> {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(limit),
+  });
+  const res = await fetch(
+    `${BACKEND_URL}/users/${encodeURIComponent(address)}/bookmarks?${params.toString()}`
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch bookmarks");
+  }
+  return res.json() as Promise<PaginatedBookmarks>;
+}

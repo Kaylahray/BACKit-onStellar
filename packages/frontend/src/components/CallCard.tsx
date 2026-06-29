@@ -3,6 +3,7 @@
 import StakeBar from "./StakeBar";
 import ShareButton from "./ShareButton";
 import CountdownTimer from "./CountdownTimer";
+import BookmarkButton from "./BookmarkButton";
 
 interface CallCardProps {
   call: any;
@@ -93,6 +94,11 @@ export default function CallCard({ call }: CallCardProps) {
             <div className="text-xs text-gray-500">Participants</div>
             <div className="text-sm font-medium">{call.participants || 0}</div>
           </div>
+          <BookmarkButton
+            callId={call.id}
+            initialBookmarked={call.isBookmarked ?? false}
+            initialCount={call.bookmarkCount ?? 0}
+          />
           <ShareButton
             marketTitle={call.condition || call.title || "Market"}
             marketId={call.id}

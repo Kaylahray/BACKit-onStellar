@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import FeedTabs from "@/components/FeedTabs";
+import FeedTabs, { type FeedTab } from "@/components/FeedTabs";
+import BookmarkedFeed from "@/components/BookmarkedFeed";
 import { CallCardSkeleton } from "@/components/CardCallSkeleton";
 import { EmptyState } from "@/components/EmptyState";
 import CallCard from "@/components/CallCard";
@@ -14,7 +15,7 @@ import { ArrowUp, LayoutList, LayoutGrid } from "lucide-react";
 type ViewMode = "list" | "grid";
 
 export default function FeedPage() {
-  const [tab, setTab] = useState<"for-you" | "following">("for-you");
+  const [tab, setTab] = useState<FeedTab>("for-you");
   const [filters, setFilters] = useState<{ status: string | null }>({ status: null });
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (typeof window !== "undefined") {
@@ -23,7 +24,13 @@ export default function FeedPage() {
     return "list";
   });
 
-  const { items, loading, loadingMore, hasMore, loadMore } = useFeed(tab, filters);
+  // The "bookmarked" tab is rendered by <BookmarkedFeed/>; keep useFeed on a
+  // valid feed type so it never requests an unsupported feed.
+  const feedTab = tab === "bookmarked" ? "for-you" : tab;
+  const { items, loading, loadingMore, hasMore, loadMore } = useFeed(
+    feedTab,
+    filters
+  );
 
   const cacheKey = `${tab}-${filters.status || 'all'}`;
   const { triggerRef, showBackToTop, scrollToTop } = useInfiniteScroll({
@@ -87,6 +94,10 @@ export default function FeedPage() {
       <FeedTabs active={tab} onChange={setTab} />
       <FilterBar onFilterChange={handleFilterChange} />
 
+      {tab === "bookmarked" && <BookmarkedFeed />}
+
+      {tab !== "bookmarked" && (
+        <>
       {loading && (
         <div className={effectiveView === "grid" ? "grid grid-cols-2 xl:grid-cols-3 gap-4 mt-4" : "space-y-4 mt-4"}>
           {[...Array(6)].map((_, i) => (
@@ -132,6 +143,8 @@ export default function FeedPage() {
         <div className="text-center text-gray-500 py-8 font-medium">
           No more markets
         </div>
+      )}
+        </>
       )}
 
       {/* Back to Top button */}
