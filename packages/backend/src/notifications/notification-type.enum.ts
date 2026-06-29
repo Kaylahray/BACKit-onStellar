@@ -5,4 +5,6 @@ export enum NotificationType {
   NEW_FOLLOWER = 'NEW_FOLLOWER',
   CALL_RESOLVED = 'CALL_RESOLVED',
   STAKE_UPDATE = 'STAKE_UPDATE',
+  /** A call/market the user staked on is about to close (#375). */
+  CALL_CLOSING = 'CALL_CLOSING',
 }

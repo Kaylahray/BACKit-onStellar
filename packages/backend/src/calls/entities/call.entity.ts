@@ -44,6 +44,13 @@ export class Call {
   })
   status: CallStatus;
 
+  /**
+   * Scheduled close/expiry time of the market. Used by the "closing soon"
+   * notification cron (#375) to find open calls approaching their deadline.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  endsAt: Date | null;
+
   // ─── resolution ───────────────────────────────────────────────────────────
 
   @Column({ type: 'timestamp', nullable: true })
