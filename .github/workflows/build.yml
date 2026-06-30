@@ -51,13 +51,22 @@ jobs:
   build-contracts:
     name: Contract Build
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,wasm32v1-none
+
+      - name: Ensure wasm32v1-none target is available
+        run: rustup target add wasm32v1-none
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -65,9 +74,50 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            packages/contracts/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('packages/contracts/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('packages/contracts/*/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
 
-      - name: Build
+      - name: Cache contract build artifacts
+        uses: actions/cache@v4
+        with:
+          path: packages/contracts/target
+          key: ${{ runner.os }}-contracts-target-${{ hashFiles('packages/contracts/*/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-contracts-target-${{ hashFiles('packages/contracts/*/Cargo.toml') }}-
+            ${{ runner.os }}-contracts-target-
+
+      - name: Install Stellar CLI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURL_ARGS=(-sS -L -H "Accept: application/vnd.github+json")
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            CURL_ARGS+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+          fi
+          release_json="$(mktemp)"
+          trap 'rm -f "$release_json"' EXIT
+          curl "${CURL_ARGS[@]}" --fail --retry 3 --retry-connrefused \
+            -o "$release_json" \
+            "https://api.github.com/repos/stellar/stellar-cli/releases/latest"
+          STELLAR_TAG="$(python3 -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); exec("try:\n data=json.loads(p.read_text())\nexcept json.JSONDecodeError as e:\n raise SystemExit(\"Failed to parse GitHub API response: \"+str(e))\ntag=data.get(\"tag_name\")\nif not tag:\n raise SystemExit(\"Failed to fetch stellar-cli latest release tag_name: \"+str(data.get(\"message\") or \"no tag_name\"))\nprint(tag)")' "$release_json")"
+          STELLAR_VERSION="${STELLAR_TAG#v}"
+          STELLAR_URL="https://github.com/stellar/stellar-cli/releases/download/${STELLAR_TAG}/stellar-cli-${STELLAR_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSL --fail --retry 3 -o stellar-cli.tar.gz "$STELLAR_URL"
+          tar -xzf stellar-cli.tar.gz
+          sudo mv stellar /usr/local/bin/
+          stellar --version
+
+      - name: Pre-build prediction_market WASM (required by factory build.rs)
+        run: |
+          cd packages/contracts
+          rm -f target/wasm32-unknown-unknown/release/prediction_market*.wasm
+          rm -f target/wasm32v1-none/release/prediction_market*.wasm
+          cd prediction_market
+          stellar contract build
+
+      - name: Build contracts
         run: cd packages/contracts && cargo build --release
+
+      - name: Report sccache stats
+        run: sccache --show-stats
