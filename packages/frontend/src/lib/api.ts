@@ -181,6 +181,42 @@ export async function removeBookmark(
   }
 }
 
+// ── Notification Preferences ───────────────────────────────────────────────
+
+export interface NotificationPreference {
+  notificationType: string;
+  channel: string;
+  enabled: boolean;
+}
+
+/** GET /users/:address/notification-preferences */
+export async function getNotificationPreferences(
+  address: string
+): Promise<NotificationPreference[]> {
+  const res = await fetch(
+    `${BACKEND_URL}/users/${encodeURIComponent(address)}/notification-preferences`
+  );
+  if (!res.ok) return [];
+  return res.json() as Promise<NotificationPreference[]>;
+}
+
+/** PATCH /users/:address/notification-preferences */
+export async function patchNotificationPreferences(
+  address: string,
+  preferences: NotificationPreference[]
+): Promise<NotificationPreference[]> {
+  const res = await fetch(
+    `${BACKEND_URL}/users/${encodeURIComponent(address)}/notification-preferences`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferences }),
+    }
+  );
+  if (!res.ok) throw new Error("Failed to update notification preferences");
+  return res.json() as Promise<NotificationPreference[]>;
+}
+
 /** Paginated list of a user's bookmarked calls (with joined call data). */
 export async function fetchBookmarks(
   address: string,

@@ -4,12 +4,15 @@ import StakeBar from "./StakeBar";
 import ShareButton from "./ShareButton";
 import CountdownTimer from "./CountdownTimer";
 import BookmarkButton from "./BookmarkButton";
+import { BellRing, Clock } from "lucide-react";
 
 interface CallCardProps {
   call: any;
+  /** True when the current user has closing alerts enabled for this market. */
+  closingAlertEnabled?: boolean;
 }
 
-export default function CallCard({ call }: CallCardProps) {
+export default function CallCard({ call, closingAlertEnabled = false }: CallCardProps) {
   // Determine status
   const getStatus = () => {
     if (call.resolved) return "Ended";
@@ -37,6 +40,16 @@ export default function CallCard({ call }: CallCardProps) {
             >
               {getStatus()}
             </span>
+            {closingAlertEnabled && (
+              <span
+                className="relative inline-flex items-center"
+                title="Closing-soon alerts enabled"
+                aria-label="Closing-soon alerts enabled"
+              >
+                <BellRing className="w-3.5 h-3.5 text-amber-500" />
+                <Clock className="w-2 h-2 absolute -bottom-0.5 -right-0.5 text-amber-600" />
+              </span>
+            )}
           </div>
         </div>
         <div className="text-right">
