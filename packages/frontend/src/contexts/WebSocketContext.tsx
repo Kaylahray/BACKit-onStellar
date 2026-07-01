@@ -32,18 +32,36 @@ export function WebSocketProvider({ url, children }: { url: string; children: Re
         setStatus("connected");
       };
 
+      ws.onmessage = (event) => {
+        // Relay messages to the window so child components can listen
+        window.postMessage(event.data, "*");
+      };
+
       ws.onclose = () => {
         if (cancelled) return;
         setStatus("disconnected");
-        const delay = Math.min(retryDelay.current, 30000);
+        // Reduce reconnection attempts when tab is not visible
+        const base = document.visibilityState === "hidden" ? Math.min(retryDelay.current * 2, 30000) : retryDelay.current;
+        const delay = Math.min(base, 30000);
         retryDelay.current = delay * 2;
         setTimeout(connect, delay);
       };
     }
 
+    // Pause reconnects when tab is hidden, resume when visible
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible" && !wsRef.current || wsRef.current?.readyState === WebSocket.CLOSED) {
+        retryDelay.current = 1000;
+        connect();
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     connect();
+
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       wsRef.current?.close();
     };
   }, [url]);
@@ -55,7 +73,11 @@ export function WebSocketProvider({ url, children }: { url: string; children: Re
   return (
     <WebSocketContext.Provider value={{ status, send }}>
       {status === "disconnected" && (
-        <div style={{ background: "#f59e0b", color: "#fff", padding: "4px 12px", fontSize: 12 }}>
+        <div
+          role="alert"
+          aria-live="polite"
+          style={{ background: "#f59e0b", color: "#fff", padding: "4px 12px", fontSize: 12 }}
+        >
           Reconnecting...
         </div>
       )}

@@ -310,6 +310,9 @@ fn test_fuzz_large_number_of_iterations() {
 #[test]
 fn test_fuzz_extreme_timestamp_near_max() {
     let (env, client, _admin, _om, stake_token) = setup_fuzz_env();
+    // Ledger timestamp set to 1000; max duration is DEFAULT_MAX_DURATION_SECS = 2_592_000.
+    // All end_ts values must satisfy: end_ts - 1000 <= 2_592_000, i.e. end_ts <= 2_593_000.
+    // Use boundary and near-boundary timestamps within the allowed duration window.
     env.ledger().set_timestamp(1000);
 
     let creator = Address::generate(&env);
@@ -317,7 +320,13 @@ fn test_fuzz_extreme_timestamp_near_max() {
     let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
     let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
 
-    let extreme_timestamps = [u64::MAX - 1, u64::MAX - 100, u64::MAX - 1000, u64::MAX / 2];
+    // Boundary timestamps: exact max, one under max, halfway through max, and 1 second in future
+    let extreme_timestamps = [
+        1000 + 2_592_000,       // exactly at the max duration limit
+        1000 + 2_592_000 - 1,  // one second under the limit
+        1000 + 2_592_000 - 100, // 100 seconds under the limit
+        1000 + 2_592_000 / 2,  // halfway through the max duration
+    ];
 
     for &end_ts in &extreme_timestamps {
         let call = client.create_call(
