@@ -3058,8 +3058,7 @@ mod sep10_tests {
     fn test_create_call_exceeds_max_duration_panics() {
         let (env, client, admin, _) = setup();
         let creator = Address::generate(&env);
-        let token = env.register(MockToken, ());
-        let token_addr = Address::from_contract_id(&token);
+        let token_addr = env.register(MockToken, ());
 
         client.whitelist_token(&token_addr);
         env.ledger().with_mut(|l| l.timestamp = 1000);
@@ -3093,8 +3092,7 @@ mod sep10_tests {
     fn test_create_call_at_exact_max_duration_succeeds() {
         let (env, client, admin, _) = setup();
         let creator = Address::generate(&env);
-        let token = env.register(MockToken, ());
-        let token_addr = Address::from_contract_id(&token);
+        let token_addr = env.register(MockToken, ());
 
         client.whitelist_token(&token_addr);
         env.ledger().with_mut(|l| l.timestamp = 1000);
