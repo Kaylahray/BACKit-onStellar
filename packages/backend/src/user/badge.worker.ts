@@ -231,7 +231,9 @@ export class BadgeWorker implements OnApplicationBootstrap {
         qualifying.map((r) => r.id),
         badge,
       );
-      this.logger.log(`Streak ${streak}: assigned to ${qualifying.length} users`);
+      this.logger.log(
+        `Streak ${streak}: assigned to ${qualifying.length} users`,
+      );
     }
   }
 

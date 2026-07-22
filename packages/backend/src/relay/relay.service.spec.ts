@@ -419,13 +419,15 @@ describe('RelayService', () => {
     });
 
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       { simulateTransaction: jest.fn() } as any,
     );
 
-    await expect((service as any).estimateFee('bad-xdr')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      (service as any).estimateFee('bad-xdr'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('estimateFee returns fee estimates with successful simulation', async () => {
@@ -438,9 +440,7 @@ describe('RelayService', () => {
     };
     (TransactionBuilder.fromXDR as any).mockReturnValueOnce(tx);
 
-    jest
-      .spyOn(SorobanRpc.Api, 'isSimulationSuccess')
-      .mockReturnValueOnce(true);
+    jest.spyOn(SorobanRpc.Api, 'isSimulationSuccess').mockReturnValueOnce(true);
 
     const rpcServer = {
       simulateTransaction: jest
@@ -448,14 +448,16 @@ describe('RelayService', () => {
         .mockResolvedValue({ minResourceFee: '200', cost: { cpu: 1 } }),
     };
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       rpcServer as any,
     );
 
     const origFetch = global.fetch;
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 0.5 } }) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      json: () => Promise.resolve({ stellar: { usd: 0.5 } }),
+    }) as any;
 
     const result = await (service as any).estimateFee('valid-xdr');
     expect(result).toEqual({
@@ -477,14 +479,16 @@ describe('RelayService', () => {
       simulateTransaction: jest.fn().mockRejectedValue(new Error('rpc error')),
     };
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       rpcServer as any,
     );
 
     const origFetch = global.fetch;
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 1 } }) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      json: () => Promise.resolve({ stellar: { usd: 1 } }),
+    }) as any;
 
     const result = await (service as any).estimateFee('valid-xdr');
     expect(result.estimatedGasXLM).toBe('0.0000500');
@@ -507,14 +511,16 @@ describe('RelayService', () => {
       simulateTransaction: jest.fn().mockResolvedValue({}),
     };
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       rpcServer as any,
     );
 
     const origFetch = global.fetch;
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 0.5 } }) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      json: () => Promise.resolve({ stellar: { usd: 0.5 } }),
+    }) as any;
 
     const result = await (service as any).estimateFee('fee-bump-xdr');
     expect(result.estimatedGasXLM).toBe('0.0000100');
@@ -529,7 +535,9 @@ describe('RelayService', () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('network error'));
 
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
     );
 
@@ -543,7 +551,9 @@ describe('RelayService', () => {
     (TransactionBuilder.fromXDR as any).mockReturnValueOnce({ fee: '100' });
 
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
     );
 
@@ -567,12 +577,14 @@ describe('RelayService', () => {
     (TransactionBuilder.fromXDR as any).mockReturnValueOnce({ fee: '100' });
 
     const origFetch = global.fetch;
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ json: () => Promise.resolve({ stellar: { usd: 0.5 } }) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      json: () => Promise.resolve({ stellar: { usd: 0.5 } }),
+    }) as any;
 
     const service = new RelayService(
-      { getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }) } as any,
+      {
+        getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
+      } as any,
       { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
     );
 

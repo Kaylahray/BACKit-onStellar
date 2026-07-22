@@ -124,10 +124,14 @@ export class EventsGateway
     }
 
     const room = `call:${call_id}`;
-    const roomsCount = Array.from(client.rooms.keys()).filter(r => r.startsWith('call:')).length;
-    
+    const roomsCount = Array.from(client.rooms.keys()).filter((r) =>
+      r.startsWith('call:'),
+    ).length;
+
     if (roomsCount >= 10) {
-      client.emit('error', { message: 'Maximum 10 room subscriptions allowed' });
+      client.emit('error', {
+        message: 'Maximum 10 room subscriptions allowed',
+      });
       return;
     }
 
@@ -237,7 +241,11 @@ export class EventsGateway
    * Internal event name: 'stake.created'  (matches Issue 9 convention)
    */
   @OnEvent('indexer.StakeAdded')
-  onStakeAdded(payload: { call_id: string; poolTotals: any; participantList: any[] }) {
+  onStakeAdded(payload: {
+    call_id: string;
+    poolTotals: any;
+    participantList: any[];
+  }) {
     const room = `call:${payload.call_id}`;
     this.logger.debug(`Broadcasting StakeAdded to room "${room}"`);
     this.server.to(room).emit('StakeAdded', payload);

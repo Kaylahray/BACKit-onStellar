@@ -36,8 +36,14 @@ export class AddStreakAndStakeComment1760000010000 implements MigrationInterface
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN IF EXISTS "currentWinStreak"`);
-    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN IF EXISTS "bestWinStreak"`);
-    await queryRunner.query(`ALTER TABLE "stakes" DROP COLUMN IF EXISTS "comment"`);
+    await queryRunner.query(
+      `ALTER TABLE "users" DROP COLUMN IF EXISTS "currentWinStreak"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "users" DROP COLUMN IF EXISTS "bestWinStreak"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "stakes" DROP COLUMN IF EXISTS "comment"`,
+    );
   }
 }
