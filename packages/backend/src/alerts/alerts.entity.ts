@@ -17,8 +17,6 @@ export enum AlertDirection {
  * rather than deleted, so it still shows up in history / doesn't re-fire.
  */
 @Entity('price_alerts')
-@Index(['userAddress', 'triggered'])
-@Index(['tokenPair', 'triggered'])
 export class PriceAlert {
   @PrimaryGeneratedColumn('uuid')
   id: string;

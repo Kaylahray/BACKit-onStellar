@@ -7,7 +7,6 @@ import {
 } from 'typeorm';
 
 @Entity('stakes')
-@Index(['userAddress', 'callId'])
 export class Stake {
   @PrimaryGeneratedColumn('uuid')
   id: string;
