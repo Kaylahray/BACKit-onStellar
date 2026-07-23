@@ -11,5 +11,5 @@ export const typeOrmConfig: TypeOrmModuleOptions = {
   password: process.env.POSTGRES_PASSWORD,
   database: process.env.POSTGRES_DB,
   autoLoadEntities: true,
-  synchronize: true, // dev only
+  synchronize: process.env.NODE_ENV === 'development', // dev only
 };

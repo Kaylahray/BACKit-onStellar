@@ -50,7 +50,7 @@ import { StakesModule } from './stakes/stakes.module';
         process.env.DB_PASSWORD || process.env.POSTGRES_PASSWORD || 'postgres',
       database: process.env.DB_NAME || process.env.POSTGRES_DB || 'backit',
       autoLoadEntities: true,
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: process.env.NODE_ENV === 'development',
     }),
     CallsModule,
     HealthModule,
