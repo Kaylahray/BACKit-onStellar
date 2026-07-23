@@ -8,8 +8,8 @@ import {
 } from 'typeorm';
 
 @Entity('calls')
-@Index(['creatorAddress', 'createdAt'])
-@Index(['outcome', 'resolvedAt'])
+@Index('IDX_call_creator_created', ['creatorAddress', 'createdAt'])
+@Index('IDX_call_outcome_resolved', ['outcome', 'resolvedAt'])
 export class Call {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -1,7 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
 @Entity('token_price_history')
-@Index(['tokenPair', 'timestamp'])
+@Index('IDX_price_history_pair_time', ['tokenPair', 'timestamp'])
 export class PriceHistory {
   @PrimaryGeneratedColumn('uuid')
   id: string;

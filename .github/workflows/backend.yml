@@ -142,7 +142,8 @@ jobs:
       - name: Reset Test Database
         if: steps.backend_changes.outputs.backend_relevant == 'true'
         run: |
-          PGPASSWORD=password psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS backit_test; CREATE DATABASE backit_test;"
+          PGPASSWORD=password psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS backit_test;"
+          PGPASSWORD=password psql -h localhost -U postgres -c "CREATE DATABASE backit_test;"
 
       - name: Run Backend Startup Smoke Test
         if: steps.backend_changes.outputs.backend_relevant == 'true'
