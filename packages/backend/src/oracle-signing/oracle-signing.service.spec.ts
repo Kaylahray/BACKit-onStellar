@@ -21,7 +21,9 @@ function buildConfigService(keyHex = TEST_PRIVATE_KEY_HEX): ConfigService {
   } as unknown as ConfigService;
 }
 
-async function buildService(configService: ConfigService): Promise<OracleSigningService> {
+async function buildService(
+  configService: ConfigService,
+): Promise<OracleSigningService> {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       OracleSigningService,
@@ -73,12 +75,18 @@ describe('OracleSigningService', () => {
     });
 
     it('returns consistent public key across multiple getPublicKey() calls', () => {
-      expect(service.getPublicKey().publicKey).toBe(service.getPublicKey().publicKey);
+      expect(service.getPublicKey().publicKey).toBe(
+        service.getPublicKey().publicKey,
+      );
     });
   });
 
   describe('buildMessage', () => {
-    const payload: PricePayload = { asset: 'BTC_USD', price: '65000.50', timestamp: 1700000000 };
+    const payload: PricePayload = {
+      asset: 'BTC_USD',
+      price: '65000.50',
+      timestamp: 1700000000,
+    };
 
     it('produces a Buffer', () => {
       expect(service.buildMessage(payload)).toBeInstanceOf(Buffer);
@@ -99,12 +107,18 @@ describe('OracleSigningService', () => {
     });
 
     it('is deterministic', () => {
-      expect(service.buildMessage(payload)).toEqual(service.buildMessage(payload));
+      expect(service.buildMessage(payload)).toEqual(
+        service.buildMessage(payload),
+      );
     });
   });
 
   describe('sign', () => {
-    const payload: PricePayload = { asset: 'XLM_USD', price: '0.11', timestamp: 1700500000 };
+    const payload: PricePayload = {
+      asset: 'XLM_USD',
+      price: '0.11',
+      timestamp: 1700500000,
+    };
 
     it('returns asset, price, timestamp unchanged', () => {
       const result = service.sign(payload);
@@ -120,12 +134,18 @@ describe('OracleSigningService', () => {
     });
 
     it('is deterministic', () => {
-      expect(service.sign(payload).signature).toBe(service.sign(payload).signature);
+      expect(service.sign(payload).signature).toBe(
+        service.sign(payload).signature,
+      );
     });
   });
 
   describe('verify', () => {
-    const payload: PricePayload = { asset: 'BTC_USD', price: '65000.00', timestamp: 1700000000 };
+    const payload: PricePayload = {
+      asset: 'BTC_USD',
+      price: '65000.00',
+      timestamp: 1700000000,
+    };
 
     it('returns true for a valid self-signed payload', () => {
       const { signature } = service.sign(payload);
@@ -134,18 +154,28 @@ describe('OracleSigningService', () => {
 
     it('returns false for a tampered price', () => {
       const { signature } = service.sign(payload);
-      expect(service.verify({ ...payload, price: '99999.00' }, signature)).toBe(false);
+      expect(service.verify({ ...payload, price: '99999.00' }, signature)).toBe(
+        false,
+      );
     });
 
     it('returns false for a random garbage signature', () => {
-      expect(service.verify(payload, Buffer.alloc(64).toString('hex'))).toBe(false);
+      expect(service.verify(payload, Buffer.alloc(64).toString('hex'))).toBe(
+        false,
+      );
     });
   });
 
   describe('cross-instance', () => {
     it('a signature from one instance verifies on another with the same key', async () => {
-      const service2 = await buildService(buildConfigService(TEST_PRIVATE_KEY_HEX));
-      const payload: PricePayload = { asset: 'ETH_USD', price: '3200.00', timestamp: 1700000000 };
+      const service2 = await buildService(
+        buildConfigService(TEST_PRIVATE_KEY_HEX),
+      );
+      const payload: PricePayload = {
+        asset: 'ETH_USD',
+        price: '3200.00',
+        timestamp: 1700000000,
+      };
       const { signature } = service.sign(payload);
       expect(service2.verify(payload, signature)).toBe(true);
     });

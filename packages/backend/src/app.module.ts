@@ -27,6 +27,8 @@ import { CommentsModule } from './comments/comments.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { LoggerModule } from './common/logger/logger.module';
+import { AlertsModule } from './alerts/alerts.module';
+import { StakesModule } from './stakes/stakes.module';
 
 @Module({
   imports: [
@@ -48,7 +50,7 @@ import { LoggerModule } from './common/logger/logger.module';
         process.env.DB_PASSWORD || process.env.POSTGRES_PASSWORD || 'postgres',
       database: process.env.DB_NAME || process.env.POSTGRES_DB || 'backit',
       autoLoadEntities: true,
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: process.env.NODE_ENV === 'development',
     }),
     CallsModule,
     HealthModule,
@@ -69,6 +71,8 @@ import { LoggerModule } from './common/logger/logger.module';
     FirewallModule,
     LeaderboardModule,
     CommentsModule,
+    AlertsModule,
+    StakesModule,
   ],
   controllers: [],
   providers: [{ provide: APP_INTERCEPTOR, useClass: LoggingInterceptor }],

@@ -21,7 +21,6 @@ import {
 import { Call } from './entities/call.entity';
 import { Stake } from './entities/stake.entity';
 
-
 // Raw query result types
 interface DailyProfitRow {
   dailyProfit: string | null;
@@ -55,7 +54,6 @@ interface AccuracyStatsRow {
   total: string | null;
 }
 
-
 // Raw query result types
 interface DailyProfitRow {
   dailyProfit: string | null;
@@ -88,7 +86,6 @@ interface AccuracyStatsRow {
   correct: string | null;
   total: string | null;
 }
-
 
 @Injectable()
 export class AnalyticsService {
@@ -241,13 +238,15 @@ export class AnalyticsService {
 
     // Convert to cumulative values
     let cumulative = 0;
-    const dataPoints: ProfitDataPoint[] = (rawData as DailyProfitRow[]).map((row) => {
-      cumulative += parseFloat(row.dailyProfit ?? '0');
-      return {
-        date: new Date(row.date).toISOString().split('T')[0],
-        value: Number(cumulative.toFixed(7)), // Stellar precision
-      };
-    });
+    const dataPoints: ProfitDataPoint[] = (rawData as DailyProfitRow[]).map(
+      (row) => {
+        cumulative += parseFloat(row.dailyProfit ?? '0');
+        return {
+          date: new Date(row.date).toISOString().split('T')[0],
+          value: Number(cumulative.toFixed(7)), // Stellar precision
+        };
+      },
+    );
 
     // Fill in missing dates with previous cumulative value
     return this.fillMissingDates(dataPoints, startDate, endDate, 'day');
@@ -275,13 +274,15 @@ export class AnalyticsService {
 
     // Convert to cumulative values
     let cumulative = 0;
-    const dataPoints: ProfitDataPoint[] = (rawData as WeeklyProfitRow[]).map((row) => {
-      cumulative += parseFloat(row.weeklyProfit ?? '0');
-      return {
-        date: new Date(row.date).toISOString().split('T')[0],
-        value: Number(cumulative.toFixed(7)),
-      };
-    });
+    const dataPoints: ProfitDataPoint[] = (rawData as WeeklyProfitRow[]).map(
+      (row) => {
+        cumulative += parseFloat(row.weeklyProfit ?? '0');
+        return {
+          date: new Date(row.date).toISOString().split('T')[0],
+          value: Number(cumulative.toFixed(7)),
+        };
+      },
+    );
 
     return this.fillMissingDates(dataPoints, startDate, endDate, 'week');
   }
@@ -316,18 +317,20 @@ export class AnalyticsService {
     let totalCorrect = 0;
     let totalResolved = 0;
 
-    const dataPoints: AccuracyDataPoint[] = (rawData as AccuracyRow[]).map((row) => {
-      totalCorrect += parseInt(row.correct ?? '0');
-      totalResolved += parseInt(row.total ?? '0');
+    const dataPoints: AccuracyDataPoint[] = (rawData as AccuracyRow[]).map(
+      (row) => {
+        totalCorrect += parseInt(row.correct ?? '0');
+        totalResolved += parseInt(row.total ?? '0');
 
-      const accuracy =
-        totalResolved > 0 ? (totalCorrect / totalResolved) * 100 : 0;
+        const accuracy =
+          totalResolved > 0 ? (totalCorrect / totalResolved) * 100 : 0;
 
-      return {
-        date: new Date(row.date).toISOString().split('T')[0],
-        value: Number(accuracy.toFixed(2)),
-      };
-    });
+        return {
+          date: new Date(row.date).toISOString().split('T')[0],
+          value: Number(accuracy.toFixed(2)),
+        };
+      },
+    );
 
     return this.fillMissingDates(dataPoints, startDate, endDate, 'day', true);
   }

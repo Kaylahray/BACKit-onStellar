@@ -7,4 +7,5 @@ export enum NotificationType {
   STAKE_UPDATE = 'STAKE_UPDATE',
   /** A call/market the user staked on is about to close (#375). */
   CALL_CLOSING = 'CALL_CLOSING',
+  PRICE_ALERT_TRIGGERED = 'PRICE_ALERT_TRIGGERED',
 }
