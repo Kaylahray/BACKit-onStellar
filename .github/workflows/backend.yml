@@ -141,7 +141,8 @@ jobs:
 
       - name: Run Database Migrations
         if: steps.backend_changes.outputs.backend_relevant == 'true'
-        run: pnpm --filter backend typeorm migration:run
+        working-directory: packages/backend
+        run: node -r tsconfig-paths/register ./node_modules/typeorm/cli.js --dataSource dist/database/data-source.js migration:run
 
       - name: Run Backend Startup Smoke Test
         if: steps.backend_changes.outputs.backend_relevant == 'true'
