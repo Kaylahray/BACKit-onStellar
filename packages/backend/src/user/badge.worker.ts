@@ -32,7 +32,13 @@ export class BadgeWorker implements OnApplicationBootstrap {
 
   // Seed badge definitions on boot so they always exist
   async onApplicationBootstrap() {
-    await this.seedBadgeDefinitions();
+    try {
+      await this.seedBadgeDefinitions();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to seed badge definitions in BadgeWorker: ${error.message}`,
+      );
+    }
   }
 
   // ── Cron: run every night at 02:00 UTC ────────────────────────────────────
