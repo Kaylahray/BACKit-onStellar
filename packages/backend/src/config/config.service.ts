@@ -33,7 +33,13 @@ export class ConfigService implements OnApplicationBootstrap {
    * Safe to call multiple times — fully idempotent.
    */
   async onApplicationBootstrap() {
-    await this.ensureSingleton();
+    try {
+      await this.ensureSingleton();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to initialize singleton settings in ConfigService: ${error.message}`,
+      );
+    }
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────

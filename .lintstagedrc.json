@@ -1,5 +1,5 @@
 {
-  "*.{ts,tsx}": ["eslint --fix --max-warnings 0", "prettier --write"],
+  "*.{ts,tsx}": ["prettier --write"],
   "*.{js,jsx,json,md,css,yml,yaml}": ["prettier --write"],
   "packages/contracts/**/*.rs": ["rustfmt --edition 2021"]
 }

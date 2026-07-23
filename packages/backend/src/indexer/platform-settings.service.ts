@@ -22,14 +22,20 @@ export class PlatformSettingsService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    // Initialize last processed ledger from database
-    const latestEvent = await this.eventLogRepository.findOne({
-      where: { eventType: EventType.ADMIN_PARAMS_CHANGED },
-      order: { ledger: 'DESC' },
-    });
+    try {
+      // Initialize last processed ledger from database
+      const latestEvent = await this.eventLogRepository.findOne({
+        where: { eventType: EventType.ADMIN_PARAMS_CHANGED },
+        order: { ledger: 'DESC' },
+      });
 
-    if (latestEvent) {
-      this.lastProcessedLedger = latestEvent.ledger;
+      if (latestEvent) {
+        this.lastProcessedLedger = latestEvent.ledger;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to initialize last processed ledger from database: ${error.message}`,
+      );
     }
 
     this.logger.log(

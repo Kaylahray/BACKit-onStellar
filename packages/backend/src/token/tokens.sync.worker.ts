@@ -10,7 +10,13 @@ export class TokensSyncWorker implements OnApplicationBootstrap {
 
   /** Run once on boot so tokens are available immediately */
   async onApplicationBootstrap(): Promise<void> {
-    await this.tokensService.syncWhitelist();
+    try {
+      await this.tokensService.syncWhitelist();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to sync tokens whitelist in TokensSyncWorker: ${error.message}`,
+      );
+    }
   }
 
   /** Re-sync every 6 hours to pick up logo/decimal changes */

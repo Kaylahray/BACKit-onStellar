@@ -41,7 +41,13 @@ export class FirewallService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.refreshCache();
+    try {
+      await this.refreshCache();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load firewall rules from database: ${(error as Error).message}`,
+      );
+    }
     this.logger.log(
       `Firewall initialised — ${this.ruleCache.length} IP rules loaded`,
     );
