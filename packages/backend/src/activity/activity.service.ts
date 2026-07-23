@@ -11,7 +11,11 @@ export class ActivityService {
     private readonly activityRepo: Repository<Activity>,
   ) {}
 
-  async createActivity(userAddress: string, type: ActivityType, metadata: any) {
+  async createActivity(
+    userAddress: string,
+    type: ActivityType,
+    metadata: Record<string, unknown>,
+  ) {
     const activity = this.activityRepo.create({ userAddress, type, metadata });
     return this.activityRepo.save(activity);
   }
@@ -38,33 +42,52 @@ export class ActivityService {
   }
 
   @OnEvent('call.created')
-  handleCallCreated(payload: any) {
-    this.createActivity(payload.creatorAddress, ActivityType.CALL_CREATED, {
-      callId: payload.id,
-      title: payload.title,
-    });
+  async handleCallCreated(payload: {
+    id: string;
+    creatorAddress: string;
+    title: string;
+  }): Promise<void> {
+    await this.createActivity(
+      payload.creatorAddress,
+      ActivityType.CALL_CREATED,
+      { callId: payload.id, title: payload.title },
+    );
   }
 
   @OnEvent('stake.created')
-  handleStakePlaced(payload: any) {
-    this.createActivity(payload.userAddress, ActivityType.STAKE_PLACED, {
+  async handleStakePlaced(payload: {
+    userAddress: string;
+    callId: string;
+    amount: number;
+  }): Promise<void> {
+    await this.createActivity(payload.userAddress, ActivityType.STAKE_PLACED, {
       callId: payload.callId,
       amount: payload.amount,
     });
   }
 
   @OnEvent('payout.claimed')
-  handlePayoutClaimed(payload: any) {
-    this.createActivity(payload.userAddress, ActivityType.PAYOUT_CLAIMED, {
-      callId: payload.callId,
-      amount: payload.amount,
-    });
+  async handlePayoutClaimed(payload: {
+    userAddress: string;
+    callId: string;
+    amount: number;
+  }): Promise<void> {
+    await this.createActivity(
+      payload.userAddress,
+      ActivityType.PAYOUT_CLAIMED,
+      { callId: payload.callId, amount: payload.amount },
+    );
   }
 
   @OnEvent('user.followed')
-  handleNewFollower(payload: any) {
-    this.createActivity(payload.followingAddress, ActivityType.NEW_FOLLOWER, {
-      followerAddress: payload.followerAddress,
-    });
+  async handleNewFollower(payload: {
+    followingAddress: string;
+    followerAddress: string;
+  }): Promise<void> {
+    await this.createActivity(
+      payload.followingAddress,
+      ActivityType.NEW_FOLLOWER,
+      { followerAddress: payload.followerAddress },
+    );
   }
 }

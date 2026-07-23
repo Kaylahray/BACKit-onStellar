@@ -1,13 +1,41 @@
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { AlertsService } from './alerts.service';
 import { AlertDirection, PriceAlert } from './alerts.entity';
+import { CallsService } from '../calls/calls.service';
+import { StakesService } from '../stakes/stakes.service';
+import { BookmarksService } from '../bookmarks/bookmarks.service';
+import { Repository } from 'typeorm';
+
+// ── Mock factories ────────────────────────────────────────────────────────────
+
+const mockAlertsRepo = () => ({
+  create: jest.fn(),
+  save: jest.fn(),
+  find: jest.fn(),
+  findOne: jest.fn(),
+  remove: jest.fn(),
+});
+
+const mockCallsService = () => ({
+  getCallOrThrow: jest.fn(),
+});
+
+const mockStakesService = () => ({
+  hasStake: jest.fn(),
+});
+
+const mockBookmarksService = () => ({
+  isBookmarked: jest.fn(),
+});
+
+// ── Suite ─────────────────────────────────────────────────────────────────────
 
 describe('AlertsService', () => {
   let service: AlertsService;
-  let alertsRepo: any;
-  let callsService: any;
-  let stakesService: any;
-  let bookmarksService: any;
+  let alertsRepo: ReturnType<typeof mockAlertsRepo>;
+  let callsService: ReturnType<typeof mockCallsService>;
+  let stakesService: ReturnType<typeof mockStakesService>;
+  let bookmarksService: ReturnType<typeof mockBookmarksService>;
 
   const userAddress = 'GABC123';
   const baseAlert: PriceAlert = {
@@ -22,31 +50,16 @@ describe('AlertsService', () => {
   };
 
   beforeEach(() => {
-    alertsRepo = {
-      create: jest.fn((data) => ({ ...data })),
-      save: jest.fn((alert) => Promise.resolve({ id: 'alert-1', ...alert })),
-      find: jest.fn(),
-      findOne: jest.fn(),
-      remove: jest.fn(),
-    };
-
-    callsService = {
-      getCallOrThrow: jest.fn(),
-    };
-
-    stakesService = {
-      hasStake: jest.fn(),
-    };
-
-    bookmarksService = {
-      isBookmarked: jest.fn(),
-    };
+    alertsRepo = mockAlertsRepo();
+    callsService = mockCallsService();
+    stakesService = mockStakesService();
+    bookmarksService = mockBookmarksService();
 
     service = new AlertsService(
-      alertsRepo,
-      callsService,
-      stakesService,
-      bookmarksService,
+      alertsRepo as unknown as Repository<PriceAlert>,
+      callsService as unknown as CallsService,
+      stakesService as unknown as StakesService,
+      bookmarksService as unknown as BookmarksService,
     );
   });
 
@@ -91,6 +104,18 @@ describe('AlertsService', () => {
       stakesService.hasStake.mockResolvedValue(true);
       bookmarksService.isBookmarked.mockResolvedValue(false);
 
+      alertsRepo.create.mockReturnValue({
+        userAddress,
+        callId: dto.callId,
+        triggered: false,
+      });
+      alertsRepo.save.mockResolvedValue({
+        id: 'alert-1',
+        userAddress,
+        callId: dto.callId,
+        triggered: false,
+      });
+
       const result = await service.createAlert(userAddress, dto);
 
       expect(alertsRepo.create).toHaveBeenCalledWith(
@@ -111,6 +136,18 @@ describe('AlertsService', () => {
       });
       stakesService.hasStake.mockResolvedValue(false);
       bookmarksService.isBookmarked.mockResolvedValue(true);
+
+      alertsRepo.create.mockReturnValue({
+        userAddress,
+        callId: dto.callId,
+        triggered: false,
+      });
+      alertsRepo.save.mockResolvedValue({
+        id: 'alert-1',
+        userAddress,
+        callId: dto.callId,
+        triggered: false,
+      });
 
       await expect(
         service.createAlert(userAddress, dto),
