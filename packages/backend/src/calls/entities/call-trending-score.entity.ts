@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 
 @Entity('call_trending_scores')
-@Index(['score', 'updatedAt'])
+@Index('IDX_trending_score_updated', ['score', 'updatedAt'])
 export class CallTrendingScore {
   @PrimaryColumn({ type: 'uuid' })
   callId: string;

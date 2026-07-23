@@ -7,8 +7,8 @@ import {
 } from 'typeorm';
 
 @Entity('treasury_entries')
-@Index(['tokenAddress', 'collectedAt'])
-@Index(['callId', 'collectedAt'])
+@Index('IDX_treasury_token_collected', ['tokenAddress', 'collectedAt'])
+@Index('IDX_treasury_call_collected', ['callId', 'collectedAt'])
 export class TreasuryEntry {
   @PrimaryGeneratedColumn('uuid')
   id: string;
