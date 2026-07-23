@@ -12,8 +12,8 @@ import {
 import { Call } from '../../calls/entities/call.entity';
 
 @Entity('comments')
-@Index(['callId', 'createdAt'])
-@Index(['authorAddress', 'callId'])
+@Index('IDX_comment_call_created', ['callId', 'createdAt'])
+@Index('IDX_comment_author_call', ['authorAddress', 'callId'])
 export class Comment {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -19,7 +19,7 @@ import { AuditLog } from './audit-log.entity';
 import { QueryAuditLogsDto } from './dto/query-audit-logs.dto';
 
 /**
- * NOTE: Swap `JwtAuthGuard` and `AdminGuard` for whatever guards your project
+ * NOTE: Swap `JwtAuthGuard` and `AdminGuard` for whatever guards your projects
  * already uses — e.g. an `@Roles('admin')` + `RolesGuard` combination.
  * The important thing is that these routes are protected before they reach this
  * controller. The imports below are placeholder names; adjust to your auth module.
@@ -32,7 +32,7 @@ import { AdminGuard } from '../auth/guards/admin.guard';
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('admin/audit-logs')
 export class AuditController {
-  constructor(private readonly auditService: AuditService) {}
+  constructor(private readonly auditService: AuditService) { }
 
   /**
    * GET /admin/audit-logs
