@@ -22,6 +22,7 @@ pub enum DataKey {
     StakerCallSeen(Address, u64),
     CreatorStats(Address),
     UserStake(u64, Address, u32),
+    UserTotalStakeVolume(Address),
     UpStakerCount(u64),
     DownStakerCount(u64),
     VoidRefundClaimed(u64, Address),
@@ -364,6 +365,38 @@ pub fn get_creator_stats(env: &Env, creator: &Address) -> CreatorStats {
 pub fn set_creator_stats(env: &Env, creator: &Address, stats: &CreatorStats) {
     let key = DataKey::CreatorStats(creator.clone());
     env.storage().persistent().set(&key, stats);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
+/// Get a user's cumulative total stake volume across all calls and positions
+/// they have ever staked on. Used as the "volume" input to the
+/// reputation-weighted stake-limit formula (see `crate::reputation`).
+pub fn get_user_total_stake_volume(env: &Env, user: &Address) -> i128 {
+    let key = DataKey::UserTotalStakeVolume(user.clone());
+    let result: Option<i128> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+    }
+    result.unwrap_or(0)
+}
+
+/// Accumulate `amount` into `user`'s cumulative total stake volume tracker.
+/// Uses checked addition; overflow panics with `CallRegistryError::Overflow`.
+pub fn record_user_stake_volume(env: &Env, user: &Address, amount: i128) {
+    let key = DataKey::UserTotalStakeVolume(user.clone());
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    let updated = current
+        .checked_add(amount)
+        .unwrap_or_else(|| crate::errors::overflow(env));
+    env.storage().persistent().set(&key, &updated);
     env.storage().persistent().extend_ttl(
         &key,
         PERSISTENT_LIFETIME_THRESHOLD,
