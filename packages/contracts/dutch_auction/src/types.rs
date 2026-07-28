@@ -1,7 +1,7 @@
 use soroban_sdk::{contracttype, Address};
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AuctionInfo {
     pub call_id: u64,
     pub condition_type: u32,
