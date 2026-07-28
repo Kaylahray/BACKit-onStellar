@@ -60,4 +60,10 @@ pub enum OutcomeError {
     FactoryNotSet = 27,
     /// The market address does not match the factory's registry for this call_id.
     InvalidMarket = 28,
+    /// Basket submission did not include all required condition indices.
+    BasketSubmissionIncomplete = 29,
+    /// A basket submission referenced an out-of-range condition index.
+    InvalidBasketConditionIndex = 30,
+    /// The target call is not a basket call.
+    NotBasketCall = 31,
 }

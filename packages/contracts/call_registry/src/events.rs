@@ -400,4 +400,3 @@ pub fn emit_xlm_stake_withdrawn(
         (call_id, staker.clone(), refunded_amount, penalty),
     );
 }
-

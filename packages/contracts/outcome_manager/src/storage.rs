@@ -28,6 +28,18 @@ pub struct SignedOutcome {
     pub signature: BytesN<64>,
 }
 
+/// A signed price report for one basket condition.
+#[contracttype]
+#[derive(Clone)]
+pub struct SignedBasketCondition {
+    pub call_id: u64,
+    pub condition_index: u32,
+    pub price: i128,
+    pub timestamp: u64,
+    pub oracle_pubkey: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleVote {

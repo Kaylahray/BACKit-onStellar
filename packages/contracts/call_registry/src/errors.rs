@@ -38,4 +38,8 @@ pub enum CallRegistryError {
     Sep10TokenExpired = 16,
     /// Re-entrant call detected on a guarded function.
     ReentrancyDetected = 17,
+    /// Basket call was created with zero conditions.
+    EmptyBasket = 18,
+    /// Condition type cannot be converted to a leaf condition.
+    InvalidCondition = 19,
 }

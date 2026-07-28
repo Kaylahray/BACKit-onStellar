@@ -77,7 +77,6 @@ mod admin;
 mod duration;
 mod errors;
 mod events;
-mod withdrawal;
 #[cfg(test)]
 mod fuzz_tests;
 mod governance;
@@ -87,6 +86,7 @@ mod storage;
 #[cfg(test)]
 mod test;
 pub mod types;
+mod withdrawal;
 
 use backit_shared::{OUTCOME_DOWN, OUTCOME_UP};
 use errors::CallRegistryError;
@@ -141,6 +141,18 @@ fn evaluate_condition_impl(condition: &ConditionType, start_price: i128, end_pri
             }
             end_price >= *min && end_price <= *max
         }
+        ConditionType::Basket(_) => false,
+    }
+}
+
+fn to_leaf_condition(condition: ConditionType) -> Option<LeafConditionType> {
+    match condition {
+        ConditionType::TargetAbove(target) => Some(LeafConditionType::TargetAbove(target)),
+        ConditionType::TargetBelow(target) => Some(LeafConditionType::TargetBelow(target)),
+        ConditionType::PercentUp(percent) => Some(LeafConditionType::PercentUp(percent)),
+        ConditionType::PercentDown(percent) => Some(LeafConditionType::PercentDown(percent)),
+        ConditionType::Range(min, max) => Some(LeafConditionType::Range(min, max)),
+        ConditionType::Basket(_) => None,
     }
 }
 
@@ -251,6 +263,12 @@ impl CallRegistry {
             return Err(CallRegistryError::InvalidOutcomeCount);
         }
 
+        if let ConditionType::Basket(basket) = &condition {
+            if basket.conditions.is_empty() {
+                return Err(CallRegistryError::EmptyBasket);
+            }
+        }
+
         let current_timestamp = env.ledger().timestamp();
         if end_ts <= current_timestamp {
             return Err(CallRegistryError::InvalidEndTime);
@@ -303,6 +321,7 @@ impl CallRegistry {
             condition,
             settled: false,
             voided: false,
+            unresolvable: false,
             created_at: current_timestamp,
             cancelled: false,
             metadata_version: 0,
@@ -490,7 +509,7 @@ impl CallRegistry {
         emit_call_metadata_updated(
             &env,
             call_id,
-        &creator,
+            &creator,
             &old_hash,
             &new_metadata_hash,
             call.metadata_version,
@@ -826,6 +845,9 @@ impl CallRegistry {
         if call.voided {
             panic!("Call has been voided");
         }
+        if call.unresolvable {
+            panic!("Call is unresolvable");
+        }
 
         call.outcome = outcome;
         call.end_price = end_price;
@@ -1045,6 +1067,31 @@ impl CallRegistry {
     pub fn get_condition(env: Env, call_id: u64) -> Result<ConditionType, CallRegistryError> {
         let call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
         Ok(call.condition)
+    }
+
+    /// Return basket conditions for a call.
+    ///
+    /// For legacy single-asset calls, this returns a synthetic basket of length 1.
+    pub fn get_basket_conditions(
+        env: Env,
+        call_id: u64,
+    ) -> Result<Vec<AssetCondition>, CallRegistryError> {
+        let call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
+        match call.condition {
+            ConditionType::Basket(basket) => Ok(basket.conditions),
+            condition => {
+                let leaf =
+                    to_leaf_condition(condition).ok_or(CallRegistryError::InvalidCondition)?;
+                let mut conditions = Vec::new(&env);
+                conditions.push_back(AssetCondition {
+                    token_address: call.token_address,
+                    pair_id: call.pair_id,
+                    condition: leaf,
+                    weight_bps: 10_000,
+                });
+                Ok(conditions)
+            }
+        }
     }
 
     /// Evaluate whether price movement satisfies the supplied condition.
@@ -1345,11 +1392,7 @@ impl CallRegistry {
     /// * If the caller is not the call creator.
     /// * If any outcome has been staked on by a third party.
     /// * If the call is already settled or cancelled.
-    pub fn cancel_call(
-        env: Env,
-        creator: Address,
-        call_id: u64,
-    ) -> Result<(), CallRegistryError> {
+    pub fn cancel_call(env: Env, creator: Address, call_id: u64) -> Result<(), CallRegistryError> {
         creator.require_auth();
         reentrancy_guard!(&env);
 
@@ -1409,6 +1452,9 @@ impl CallRegistry {
         if call.voided {
             panic!("Call already voided");
         }
+        if call.unresolvable {
+            panic!("Call already marked unresolvable");
+        }
 
         if call.settled {
             panic!("Call already settled");
@@ -1419,6 +1465,27 @@ impl CallRegistry {
         extend_storage_ttl(&env);
 
         emit_call_voided(&env, call_id, &config.admin);
+    }
+
+    /// Mark a call as unresolvable (outcome_manager only).
+    ///
+    /// Unresolvable calls are also voided so all stakers can claim refunds.
+    pub fn mark_unresolvable(env: Env, call_id: u64) -> Result<Call, CallRegistryError> {
+        let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        config.outcome_manager.require_auth();
+
+        let mut call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
+        if call.settled {
+            return Err(CallRegistryError::CallSettled);
+        }
+
+        call.unresolvable = true;
+        call.voided = true;
+        set_call(&env, &call);
+        extend_storage_ttl(&env);
+
+        emit_call_voided(&env, call_id, &config.outcome_manager);
+        Ok(call)
     }
 
     /// Claim a full refund for a voided call.
@@ -1437,9 +1504,10 @@ impl CallRegistry {
             panic!("Refund already claimed");
         }
 
-        let up_stake = get_user_stake(&env, call_id, &staker, 1);
-        let down_stake = get_user_stake(&env, call_id, &staker, 2);
-        let total_refund = up_stake + down_stake;
+        let mut total_refund: i128 = 0;
+        for position in 1..=call.outcome_count {
+            total_refund += get_user_stake(&env, call_id, &staker, position);
+        }
 
         if total_refund <= 0 {
             panic!("No stake to refund");
@@ -1608,12 +1676,7 @@ impl CallRegistry {
     /// * `staker`   -- address withdrawing their stake (must sign).
     /// * `call_id`  -- the call to withdraw from.
     /// * `position` -- outcome position (1..=outcome_count).
-    pub fn withdraw_stake(
-        env: Env,
-        staker: Address,
-        call_id: u64,
-        position: u32,
-    ) -> (i128, i128) {
+    pub fn withdraw_stake(env: Env, staker: Address, call_id: u64, position: u32) -> (i128, i128) {
         let config = get_config(&env).expect("not initialized");
         assert!(!config.paused, "Contract is paused");
         if storage::is_locked(&env) {

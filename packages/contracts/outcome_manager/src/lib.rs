@@ -7,9 +7,9 @@ mod errors;
 mod events;
 #[cfg(test)]
 mod fuzz_tests;
+mod rotation;
 mod storage;
 mod test;
-mod rotation;
 mod verification;
 
 pub use storage::SignedOutcome;
@@ -19,7 +19,7 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, 
 
 use auth::require_admin;
 use backit_shared::{is_valid_fee_bps, is_valid_outcome};
-use call_types::{Call, CallRegistryError};
+use call_types::{BasketLogic, Call, CallRegistryError, ConditionType, LeafConditionType};
 use errors::OutcomeError;
 use events::{
     emit_admin_params_changed, emit_batch_payout_started, emit_claimable_balance_created,
@@ -28,7 +28,7 @@ use events::{
 };
 use storage::{
     set_dispute_window, set_max_submission_delay, InstanceKey, OracleVote, Outcome, PersistentKey,
-    PriceObservation, TempKey,
+    PriceObservation, SignedBasketCondition, TempKey,
 };
 use verification::{build_message, verify_signature};
 
@@ -71,6 +71,15 @@ fn registry_mark_settled(env: &Env, registry: &Address, call_id: u64) {
     let args = (call_id,).into_val(env);
     let result: Result<(), CallRegistryError> =
         env.invoke_contract(registry, &Symbol::new(env, "mark_settled"), args);
+    if result.is_err() {
+        soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
+    }
+}
+
+fn registry_mark_unresolvable(env: &Env, registry: &Address, call_id: u64) {
+    let args = (call_id,).into_val(env);
+    let result: Result<Call, CallRegistryError> =
+        env.invoke_contract(registry, &Symbol::new(env, "mark_unresolvable"), args);
     if result.is_err() {
         soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
     }
@@ -221,6 +230,49 @@ fn compute_payout_parts(
         .unwrap_or_else(|| overflow(env));
 
     (staker_fee_share, payout)
+}
+
+fn build_basket_message(
+    env: &Env,
+    call_id: u64,
+    condition_index: u32,
+    price: i128,
+    timestamp: u64,
+) -> Bytes {
+    let mut msg = Bytes::from_slice(env, b"BACKit:BasketPrice:");
+    msg.append(&Bytes::from_slice(env, &call_id.to_be_bytes()));
+    msg.append(&Bytes::from_slice(env, b":"));
+    msg.append(&Bytes::from_slice(env, &condition_index.to_be_bytes()));
+    msg.append(&Bytes::from_slice(env, b":"));
+    msg.append(&Bytes::from_slice(env, &price.to_be_bytes()));
+    msg.append(&Bytes::from_slice(env, b":"));
+    msg.append(&Bytes::from_slice(env, &timestamp.to_be_bytes()));
+    msg
+}
+
+fn evaluate_condition(condition: &LeafConditionType, start_price: i128, end_price: i128) -> bool {
+    match condition {
+        LeafConditionType::TargetAbove(target) => end_price > *target,
+        LeafConditionType::TargetBelow(target) => end_price < *target,
+        LeafConditionType::PercentUp(percent) => {
+            if start_price <= 0 {
+                return false;
+            }
+            end_price * 100 >= start_price * (100 + *percent as i128)
+        }
+        LeafConditionType::PercentDown(percent) => {
+            if start_price <= 0 {
+                return false;
+            }
+            end_price * 100 <= start_price * (100 - *percent as i128)
+        }
+        LeafConditionType::Range(min, max) => {
+            if min > max {
+                return false;
+            }
+            end_price >= *min && end_price <= *max
+        }
+    }
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -439,6 +491,146 @@ impl OutcomeManager {
     pub fn submit_outcome_for_market(env: Env, signed: SignedOutcome, call_end_ts: u64) {
         let registry = Self::resolve_market_address(env.clone(), signed.call_id);
         Self::submit_outcome(env, registry, signed, call_end_ts);
+    }
+
+    pub fn submit_basket_outcome_for_market(
+        env: Env,
+        call_id: u64,
+        submissions: Vec<SignedBasketCondition>,
+        call_end_ts: u64,
+    ) {
+        let registry = Self::resolve_market_address(env.clone(), call_id);
+        Self::submit_basket_outcome(env, registry, call_id, submissions, call_end_ts);
+    }
+
+    /// Submit per-condition oracle price reports for a basket call.
+    ///
+    /// Resolves UP only when basket logic evaluates to true.
+    /// If submissions are incomplete after deadline, marks the call unresolvable.
+    pub fn submit_basket_outcome(
+        env: Env,
+        registry: Address,
+        call_id: u64,
+        submissions: Vec<SignedBasketCondition>,
+        call_end_ts: u64,
+    ) {
+        if is_paused(&env) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::ContractPaused);
+        }
+
+        validate_market_registry(&env, &registry, call_id);
+
+        if env
+            .storage()
+            .instance()
+            .has(&InstanceKey::FinalOutcome(call_id))
+        {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::AlreadySettled);
+        }
+
+        let call = registry_get_call(&env, &registry, call_id);
+        let basket = match call.condition {
+            ConditionType::Basket(basket) => basket,
+            _ => soroban_sdk::panic_with_error!(&env, OutcomeError::NotBasketCall),
+        };
+
+        let expected_len = basket.conditions.len();
+        let max_delay = storage::get_max_submission_delay(&env);
+        let deadline = call_end_ts
+            .checked_add(max_delay)
+            .unwrap_or_else(|| overflow(&env));
+
+        if submissions.len() != expected_len {
+            if env.ledger().timestamp() > deadline {
+                registry_mark_unresolvable(&env, &registry, call_id);
+                return;
+            }
+            soroban_sdk::panic_with_error!(&env, OutcomeError::BasketSubmissionIncomplete);
+        }
+
+        let oracles = get_oracles(&env);
+        let mut seen_indices: Map<u32, bool> = Map::new(&env);
+        let mut total_weight_true: u32 = 0;
+        let mut total_price: i128 = 0;
+
+        for submission in submissions.iter() {
+            if !oracles.contains_key(submission.oracle_pubkey.clone()) {
+                soroban_sdk::panic_with_error!(&env, OutcomeError::UnauthorizedOracle);
+            }
+            if submission.timestamp > deadline {
+                soroban_sdk::panic_with_error!(&env, OutcomeError::SubmissionWindowExpired);
+            }
+            if submission.condition_index >= expected_len {
+                soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidBasketConditionIndex);
+            }
+            if seen_indices
+                .get(submission.condition_index)
+                .unwrap_or(false)
+            {
+                soroban_sdk::panic_with_error!(&env, OutcomeError::DuplicateSubmission);
+            }
+
+            let message = build_basket_message(
+                &env,
+                submission.call_id,
+                submission.condition_index,
+                submission.price,
+                submission.timestamp,
+            );
+            verify_signature(
+                &env,
+                &submission.oracle_pubkey,
+                &submission.signature,
+                &message,
+            );
+
+            let cond = basket
+                .conditions
+                .get(submission.condition_index)
+                .unwrap_or_else(|| {
+                    soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidBasketConditionIndex)
+                });
+
+            let is_true = evaluate_condition(&cond.condition, call.start_price, submission.price);
+            if is_true {
+                total_weight_true = total_weight_true
+                    .checked_add(cond.weight_bps)
+                    .unwrap_or_else(|| overflow(&env));
+            }
+
+            total_price = total_price
+                .checked_add(submission.price)
+                .unwrap_or_else(|| overflow(&env));
+            seen_indices.set(submission.condition_index, true);
+        }
+
+        let basket_true = match basket.logic {
+            BasketLogic::AllOf => {
+                total_weight_true
+                    == basket
+                        .conditions
+                        .iter()
+                        .fold(0u32, |acc, c| acc.saturating_add(c.weight_bps))
+            }
+            BasketLogic::AnyOf => total_weight_true > 0,
+            BasketLogic::Weighted(threshold_bps) => total_weight_true > threshold_bps,
+        };
+
+        let outcome = if basket_true { 1u32 } else { 2u32 };
+        let avg_price = total_price
+            .checked_div(expected_len as i128)
+            .unwrap_or_else(|| overflow(&env));
+
+        Self::finalize(
+            &env,
+            &registry,
+            Outcome {
+                call_id,
+                outcome,
+                price: avg_price,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     /// Claim payout, resolving the market address from the factory.
