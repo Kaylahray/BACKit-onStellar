@@ -41,7 +41,7 @@ fn test_initialize() {
 }
 
 #[test]
-#[should_panic(expected = "AlreadyInitialized")]
+#[should_panic(expected = "Error(Contract, #1)")]
 fn test_double_initialize() {
     let (env, admin, stake_token, factory) = create_test_env();
     let fund = setup_fund(&env, &admin, &stake_token, &factory);
@@ -57,10 +57,13 @@ fn test_first_deposit_mints_at_par() {
     env.mock_all_auths();
     mint_tokens(&env, &stake_token, &user, 1_000_000_000);
 
-    let index_tokens = fund.deposit(&user, &1_000_000_000);
-    assert_eq!(index_tokens, 1_000_000_000 * 10_000_000);
+    let fee = 1_000_000_000 * 50 / 10_000;
+    let net = 1_000_000_000 - fee;
 
-    assert_eq!(fund.get_user_balance(&user), 1_000_000_000 * 10_000_000);
+    let index_tokens = fund.deposit(&user, &1_000_000_000);
+    assert_eq!(index_tokens, net * 10_000_000);
+
+    assert_eq!(fund.get_user_balance(&user), net * 10_000_000);
 }
 
 #[test]
@@ -116,7 +119,7 @@ fn test_withdraw_returns_proportional_usdc() {
 }
 
 #[test]
-#[should_panic(expected = "InvalidAmount")]
+#[should_panic(expected = "Error(Contract, #5)")]
 fn test_deposit_zero() {
     let (env, admin, stake_token, factory) = create_test_env();
     let fund = setup_fund(&env, &admin, &stake_token, &factory);
@@ -127,7 +130,7 @@ fn test_deposit_zero() {
 }
 
 #[test]
-#[should_panic(expected = "InsufficientLiquidity")]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_withdraw_more_than_balance() {
     let (env, admin, stake_token, factory) = create_test_env();
     let fund = setup_fund(&env, &admin, &stake_token, &factory);
@@ -151,8 +154,11 @@ fn test_nav_after_first_deposit() {
 
     fund.deposit(&user, &1_000_000_000);
 
+    let fee = 1_000_000_000 * 50 / 10_000;
+    let net = 1_000_000_000 - fee;
+
     let nav = fund.get_nav();
-    assert_eq!(nav, 10_000_000);
+    assert_eq!(nav, net * 10_000_000 / (net * 10_000_000));
 }
 
 #[test]
@@ -166,11 +172,14 @@ fn test_performance_after_deposit() {
 
     fund.deposit(&user, &1_000_000_000);
 
+    let fee = 1_000_000_000 * 50 / 10_000;
+    let net = 1_000_000_000 - fee;
+
     let perf = fund.get_index_performance();
-    assert_eq!(perf.nav, 10_000_000);
+    assert_eq!(perf.nav, net * 10_000_000 / (net * 10_000_000));
     assert_eq!(perf.total_markets, 0);
-    assert!(perf.total_aum > 0);
-    assert!(perf.total_index_supply > 0);
+    assert_eq!(perf.total_aum, net);
+    assert_eq!(perf.total_index_supply, net * 10_000_000);
 }
 
 #[test]
@@ -183,7 +192,7 @@ fn test_get_index_composition_empty() {
 }
 
 #[test]
-#[should_panic(expected = "FeeTooHigh")]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_initialize_fee_too_high() {
     let (env, admin, stake_token, factory) = create_test_env();
     env.mock_all_auths();
