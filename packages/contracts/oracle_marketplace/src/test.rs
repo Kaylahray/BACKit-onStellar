@@ -18,8 +18,9 @@ fn initialize_marketplace() {
 
     let admin = Address::generate(&env);
 
-    let contract_id = env.register(OracleMarketplace, (&admin, 3600u64, 100u32));
+    let contract_id = env.register(OracleMarketplace, ());
     let client = OracleMarketplaceClient::new(&env, &contract_id);
+    client.initialize(&admin, &3600u64, &100u32);
 
     let config = client.get_config_view();
     assert_eq!(config.admin, admin);
@@ -36,8 +37,9 @@ fn register_and_deregister_oracle() {
     let provider = Address::generate(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
 
-    let contract_id = env.register(OracleMarketplace, (&admin, 3600u64, 100u32));
+    let contract_id = env.register(OracleMarketplace, ());
     let client = OracleMarketplaceClient::new(&env, &contract_id);
+    client.initialize(&admin, &3600u64, &100u32);
 
     client.register_oracle(&provider, &pubkey, &100u32, &0i128);
 
@@ -60,14 +62,15 @@ fn select_oracle_for_call_and_rate() {
     let user = Address::generate(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
 
-    let contract_id = env.register(OracleMarketplace, (&admin, 3600u64, 100u32));
+    let contract_id = env.register(OracleMarketplace, ());
     let client = OracleMarketplaceClient::new(&env, &contract_id);
+    client.initialize(&admin, &3600u64, &100u32);
 
     client.register_oracle(&provider, &pubkey, &100u32, &0i128);
     client.select_oracle_for_call(&42u64, &pubkey);
 
     let selected = client.get_call_oracle(&42u64);
-    assert_eq!(selected, pubkey);
+    assert_eq!(selected, Some(pubkey.clone()));
 
     client.rate_oracle(&user, &pubkey, &true);
 
