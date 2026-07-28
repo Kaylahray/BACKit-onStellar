@@ -6,6 +6,7 @@ members = [
   "outcome_manager",
   "prediction_market",
   "prediction_market_factory",
+  "parlay_betting",
   "contracts/hello-world",
 ]
 
