@@ -14,4 +14,7 @@ pub enum FactoryError {
     ContractPaused = 8,
     MarketWasmNotSet = 9,
     MarketNotFound = 10,
+    SwarmNotFound = 11,
+    SwarmComplete = 12,
+    InvalidSwarmStage = 13,
 }

@@ -7,6 +7,8 @@ members = [
   "prediction_market",
   "prediction_market_factory",
   "parlay_betting",
+  "governance",
+  "cross_chain_oracle_relay",
   "contracts/hello-world",
 ]
 
