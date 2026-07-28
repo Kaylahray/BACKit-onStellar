@@ -13,7 +13,7 @@ use crate::{IndexFund, IndexFundClient};
 fn create_test_env() -> (Env, Address, Address, Address) {
     let env = Env::default();
     let admin = Address::generate(&env);
-    let stake_token = env.register_stellar_asset_contract_v2(admin.clone());
+    let stake_token = env.register_stellar_asset_contract_v2(admin.clone()).address();
     let factory = Address::generate(&env);
     (env, admin, stake_token, factory)
 }
