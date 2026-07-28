@@ -658,6 +658,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gas-station"
+version = "0.0.0"
+dependencies = [
+ "backit-shared",
+ "ed25519-dalek",
+ "outcome-manager",
+ "prediction-market",
+ "prediction-market-factory",
+ "rand",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
