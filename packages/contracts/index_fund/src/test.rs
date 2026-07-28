@@ -10,8 +10,6 @@ use soroban_sdk::{
 
 use crate::{IndexFund, IndexFundClient};
 
-type TokenClient = soroban_sdk::token::Client;
-
 fn create_test_env() -> (Env, Address, Address, Address) {
     let env = Env::default();
     let admin = Address::generate(&env);
@@ -20,7 +18,7 @@ fn create_test_env() -> (Env, Address, Address, Address) {
     (env, admin, stake_token, factory)
 }
 
-fn setup_fund(env: &Env, admin: &Address, stake_token: &Address, factory: &Address) -> IndexFundClient {
+fn setup_fund<'a>(env: &'a Env, admin: &'a Address, stake_token: &'a Address, factory: &'a Address) -> IndexFundClient<'a> {
     env.mock_all_auths();
     let contract_id = env.register(IndexFund, ());
     let fund = IndexFundClient::new(env, &contract_id);
