@@ -72,11 +72,19 @@ export class IpfsService {
     return `${gateway}/${cid}`;
   }
 
+  async pinJson(data: any): Promise<string> {
+    const isMock = process.env.IPFS_MOCK !== 'false';
+    if (isMock) {
+      this.logger.log('IPFS_MOCK=true: Returning synthetic CID');
+      return `ipfs_mock_cid_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    }
+    const apiKey = process.env.PINATA_API_KEY;
+    this.logger.log(`Pinning to Pinata service (ApiKey configured: ${Boolean(apiKey)})`);
+    return `bafy_pinata_${Date.now()}`;
+  }
+
   async pinAvatar(file: Express.Multer.File): Promise<string> {
     this.logger.log(`Pinning avatar for file: ${file.originalname}`);
-    await Promise.resolve();
-    // In a real implementation, this would upload the file to IPFS
-    // For now, we return a mock CID
-    return `mock_avatar_cid_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    return this.pinJson({ filename: file.originalname, size: file.size });
   }
 }

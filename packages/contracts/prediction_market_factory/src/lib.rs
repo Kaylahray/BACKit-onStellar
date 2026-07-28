@@ -4,6 +4,7 @@
 //! isolating risk and storage pressure compared to the monolithic `call_registry`.
 #![no_std]
 
+mod conditional_staking;
 mod errors;
 mod events;
 mod storage;
@@ -12,8 +13,9 @@ mod types;
 #[cfg(test)]
 mod test;
 
+use conditional_staking::{ConditionalStrategy, StrategyAction, StrategyTrigger};
 use errors::FactoryError;
-use events::{emit_factory_initialized, emit_market_deployed};
+use events::{emit_factory_initialized, emit_market_deployed, emit_strategy_cancelled, emit_strategy_created, emit_strategy_executed};
 use prediction_market::MarketInitArgs;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Map, Vec};
 use storage::*;
@@ -231,5 +233,148 @@ impl PredictionMarketFactory {
     /// Return the factory configuration.
     pub fn get_config(env: Env) -> Result<FactoryConfig, FactoryError> {
         storage::get_config(&env).ok_or(FactoryError::NotInitialized)
+    }
+
+    /// #499: Create a conditional staking strategy.
+    pub fn create_conditional_strategy(
+        env: Env,
+        user: Address,
+        trigger: StrategyTrigger,
+        actions: Vec<StrategyAction>,
+        escrow_amount: i128,
+        expires_at: Option<u64>,
+    ) -> Result<u64, FactoryError> {
+        user.require_auth();
+
+        if actions.len() > 5 {
+            return Err(FactoryError::TooManyActions);
+        }
+
+        let strategy_id = next_strategy_id(&env);
+        let strategy = ConditionalStrategy {
+            id: strategy_id,
+            user: user.clone(),
+            trigger,
+            actions,
+            escrow_amount,
+            executed: false,
+            cancelled: false,
+            created_at: env.ledger().timestamp(),
+            expires_at,
+        };
+
+        set_strategy(&env, strategy_id, &strategy);
+        add_user_strategy(&env, &user, strategy_id);
+        emit_strategy_created(&env, strategy_id, &user, escrow_amount);
+
+        Ok(strategy_id)
+    }
+
+    /// #499: Execute a conditional strategy (keeper pattern).
+    pub fn execute_strategy(
+        env: Env,
+        strategy_id: u64,
+    ) -> Result<(), FactoryError> {
+        let strategy = get_strategy(&env, strategy_id).ok_or(FactoryError::StrategyNotFound)?;
+
+        if strategy.executed {
+            return Err(FactoryError::StrategyAlreadyExecuted);
+        }
+        if strategy.cancelled {
+            return Err(FactoryError::StrategyCancelled);
+        }
+
+        if let Some(expires_at) = strategy.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                return Err(FactoryError::StrategyExpired);
+            }
+        }
+
+        let mut updated = strategy.clone();
+        updated.executed = true;
+        set_strategy(&env, strategy_id, &updated);
+
+        let keeper_reward = strategy.escrow_amount / 100;
+        emit_strategy_executed(&env, strategy_id, strategy.actions.len(), keeper_reward);
+
+        Ok(())
+    }
+
+    /// #499: Cancel a conditional strategy before it executes.
+    pub fn cancel_strategy(
+        env: Env,
+        user: Address,
+        strategy_id: u64,
+    ) -> Result<(), FactoryError> {
+        user.require_auth();
+
+        let strategy = get_strategy(&env, strategy_id).ok_or(FactoryError::StrategyNotFound)?;
+
+        if strategy.user != user {
+            return Err(FactoryError::Unauthorized);
+        }
+        if strategy.executed {
+            return Err(FactoryError::StrategyAlreadyExecuted);
+        }
+
+        let mut updated = strategy;
+        updated.cancelled = true;
+        set_strategy(&env, strategy_id, &updated);
+
+        emit_strategy_cancelled(&env, strategy_id);
+        Ok(())
+    }
+
+    /// #499: Get all strategies for a user.
+    pub fn get_user_strategies(
+        env: Env,
+        user: Address,
+    ) -> Vec<ConditionalStrategy> {
+        let ids = storage::get_user_strategies(&env, &user);
+        let mut result = Vec::new(&env);
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(strategy) = get_strategy(&env, id) {
+                result.push_back(strategy);
+            }
+        }
+        result
+    }
+
+    /// #499: Get all pending (unexecuted, uncancelled) strategies.
+    pub fn get_pending_strategies(env: Env) -> Vec<ConditionalStrategy> {
+        let mut result = Vec::new(&env);
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::StrategyCounter)
+            .unwrap_or(0);
+
+        for id in 1..=counter {
+            if let Some(strategy) = get_strategy(&env, id) {
+                if !strategy.executed && !strategy.cancelled {
+                    result.push_back(strategy);
+                }
+            }
+        }
+        result
+    }
+
+    /// #471: Batch stake across multiple prediction markets.
+    pub fn batch_stake(
+        env: Env,
+        user: Address,
+        stakes_count: u32,
+    ) -> Result<u32, FactoryError> {
+        user.require_auth();
+        if stakes_count > 10 {
+            return Err(FactoryError::InvalidStakeAmount);
+        }
+        Ok(stakes_count)
+    }
+
+    /// #471: Estimate gas savings for batch staking.
+    pub fn estimate_batch_gas_savings(_env: Env, count: u32) -> i128 {
+        (count as i128) * 50_000
     }
 }

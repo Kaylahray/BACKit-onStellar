@@ -2752,6 +2752,442 @@ mod call_registry {
         assert_eq!(fetched.len(), 2);
         assert_eq!(fetched.get(0).unwrap().weight_bps, 5_000);
         assert_eq!(fetched.get(1).unwrap().weight_bps, 5_000);
+    // ── Reputation-weighted staking limits ───────────────────────────────────
+
+    /// Find a specific event by topic among everything emitted so far.
+    /// `env.events().all()` accumulates events from every call in the test,
+    /// so callers who need a particular event (not necessarily the last one)
+    /// scan for it explicitly, mirroring `test_storage_stats_no_warning_below_threshold`'s
+    /// `.iter().any(...)` pattern above.
+    fn find_event(
+        env: &Env,
+        topic1: &str,
+        topic2: &str,
+    ) -> Option<(Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val)> {
+        let events = env.events().all();
+        for i in 0..events.len() {
+            let e = events.get(i).unwrap();
+            if e.1
+                == soroban_sdk::vec![env, topic1.into_val(env), topic2.into_val(env),]
+            {
+                return Some(e);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_reputation_limit_defaults_to_unlimited() {
+        // Fresh contract, reputation params never configured
+        // (base_stake_limit == 0 by default) -> no cap from reputation at all,
+        // matching pre-feature behavior for legacy/unconfigured deployments.
+        let (env, client, _admin, _om) = setup();
+        let user = Address::generate(&env);
+        assert_eq!(client.get_user_stake_limit(&user), i128::MAX);
+    }
+
+    #[test]
+    fn test_new_user_restricted_to_base_limit() {
+        let (env, admin, outcome_manager, other_creator) = create_test_env();
+        let new_user = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+
+        // Give new_user a large stake-volume history on someone else's call.
+        // This must NOT raise their limit: CreatorStats (their own created &
+        // resolved calls) is the source of truth for reputation, and
+        // new_user has none, so they stay gated at exactly base_stake_limit
+        // regardless of stake volume.
+        let call_a = create_call_with_default_condition(
+            &client,
+            &other_creator,
+            &stake_token,
+            &100_000_000_i128,
+            &2000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+        client.stake_on_call(&new_user, &call_a.id, &400_000_000_i128, &1);
+
+        assert_eq!(client.get_user_stake_limit(&new_user), 1_000_000_000);
+
+        // Staking exactly the base limit (on a fresh call/position) succeeds.
+        let call_b = create_call_with_default_condition(
+            &client,
+            &other_creator,
+            &stake_token,
+            &100_000_000_i128,
+            &3000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+        let updated = client.stake_on_call(&new_user, &call_b.id, &1_000_000_000_i128, &1);
+        assert_eq!(updated.outcome_stakes.get(1).unwrap_or(0), 1_000_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stake exceeds reputation-weighted stake limit")]
+    fn test_new_user_exceeding_base_limit_panics() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let new_user = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+
+        let call = create_call_with_default_condition(
+            &client,
+            &creator,
+            &stake_token,
+            &100_000_000_i128,
+            &2000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+
+        // 1 stroop over the new-user base limit must be rejected.
+        client.stake_on_call(&new_user, &call.id, &1_000_000_001_i128, &1);
+    }
+
+    #[test]
+    fn test_proven_user_gets_higher_limit() {
+        let (env, admin, outcome_manager, proven_user) = create_test_env();
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Build a 10-call, 80%-accurate track record for `proven_user` as a
+        // call *creator* (CreatorStats -- total_created/total_resolved/
+        // total_correct -- is the reputation source of truth per the issue's
+        // technical pointers). Reputation params stay at their disabled
+        // default (0) while building history so this setup phase is not
+        // itself constrained by the very limit under test.
+        let mut call_ids: std::vec::Vec<u64> = std::vec::Vec::new();
+        for i in 0..10u64 {
+            let end_ts = 2000 + i * 1000;
+            let call = create_call_with_default_condition(
+                &client,
+                &proven_user,
+                &stake_token,
+                &100_000_000_i128,
+                &end_ts,
+                &token_address,
+                &pair_id,
+                &metadata_hash,
+                &2,
+            );
+            // proven_user stakes on UP (position 1) on their own call.
+            client.stake_on_call(&proven_user, &call.id, &50_000_000_i128, &1);
+            call_ids.push(call.id);
+        }
+
+        env.ledger().set_timestamp(20_000); // past every call's end_ts
+
+        // Resolve 8/10 as UP (matches proven_user's stake -> correct) and
+        // 2/10 as DOWN (incorrect) => 80% accuracy.
+        for (i, call_id) in call_ids.iter().enumerate() {
+            let outcome = if i < 8 { 1u32 } else { 2u32 };
+            client.resolve_call(call_id, &outcome, &150_000_000_i128);
+        }
+
+        let stats = client.get_creator_stats_view(&proven_user);
+        assert_eq!(stats.total_resolved, 10);
+        assert_eq!(stats.total_correct, 8);
+
+        // Now turn on reputation weighting.
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+
+        // proven_user is the only staker on the platform so far
+        // (10 * 50_000_000 = 500_000_000 total volume, 1 unique staker),
+        // so platform_average_volume == proven_user's own volume =>
+        // volume_factor_bps == 10_000 (exactly 1.0x), no cap triggered.
+        //
+        // accuracy_bps  = 8 * 10_000 / 10               = 8_000  (80%)
+        // factor_bps    = 10_000 + (8_000 * 10_000/10_000) = 18_000 (1.8x)
+        // reputation_limit = 1_000_000_000 * 18_000/10_000 * 10_000/10_000
+        //                  = 1_800_000_000
+        assert_eq!(client.get_user_stake_limit(&proven_user), 1_800_000_000);
+
+        // Confirm stake_on_call actually enforces this higher, personal limit
+        // on a brand-new call.
+        let other_creator = Address::generate(&env);
+        let new_call = create_call_with_default_condition(
+            &client,
+            &other_creator,
+            &stake_token,
+            &100_000_000_i128,
+            &30_000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+        let updated = client.stake_on_call(&proven_user, &new_call.id, &1_800_000_000_i128, &1);
+        assert_eq!(updated.outcome_stakes.get(1).unwrap_or(0), 1_800_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stake exceeds reputation-weighted stake limit")]
+    fn test_proven_user_still_capped_above_computed_limit() {
+        let (env, admin, outcome_manager, proven_user) = create_test_env();
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        let mut call_ids: std::vec::Vec<u64> = std::vec::Vec::new();
+        for i in 0..10u64 {
+            let end_ts = 2000 + i * 1000;
+            let call = create_call_with_default_condition(
+                &client,
+                &proven_user,
+                &stake_token,
+                &100_000_000_i128,
+                &end_ts,
+                &token_address,
+                &pair_id,
+                &metadata_hash,
+                &2,
+            );
+            client.stake_on_call(&proven_user, &call.id, &50_000_000_i128, &1);
+            call_ids.push(call.id);
+        }
+
+        env.ledger().set_timestamp(20_000);
+        for (i, call_id) in call_ids.iter().enumerate() {
+            let outcome = if i < 8 { 1u32 } else { 2u32 };
+            client.resolve_call(call_id, &outcome, &150_000_000_i128);
+        }
+
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+        // computed reputation_limit == 1_800_000_000 (see test above).
+
+        let other_creator = Address::generate(&env);
+        let new_call = create_call_with_default_condition(
+            &client,
+            &other_creator,
+            &stake_token,
+            &100_000_000_i128,
+            &30_000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+        // 1 stroop over the computed 1_800_000_000 reputation limit.
+        client.stake_on_call(&proven_user, &new_call.id, &1_800_000_001_i128, &1);
+    }
+
+    #[test]
+    fn test_stake_limit_recalculated_after_resolution_improves_accuracy() {
+        let (env, admin, outcome_manager, predictor) = create_test_env();
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+
+        let mut call_ids: std::vec::Vec<u64> = std::vec::Vec::new();
+        for i in 0..10u64 {
+            let end_ts = 2000 + i * 1000;
+            let call = create_call_with_default_condition(
+                &client,
+                &predictor,
+                &stake_token,
+                &100_000_000_i128,
+                &end_ts,
+                &token_address,
+                &pair_id,
+                &metadata_hash,
+                &2,
+            );
+            client.stake_on_call(&predictor, &call.id, &50_000_000_i128, &1);
+            call_ids.push(call.id);
+        }
+
+        env.ledger().set_timestamp(20_000);
+
+        // Resolve the first 9 as UP (correct) -- still below the 10-resolved
+        // "proven user" threshold, so the limit stays pinned at base_stake_limit.
+        for call_id in call_ids.iter().take(9) {
+            client.resolve_call(call_id, &1u32, &150_000_000_i128);
+        }
+        assert_eq!(client.get_creator_stats_view(&predictor).total_resolved, 9);
+        assert_eq!(client.get_user_stake_limit(&predictor), 1_000_000_000);
+
+        // Resolve the 10th call, also correctly. This crosses the
+        // NEW_USER_RESOLVED_THRESHOLD (10) with 10/10 == 100% accuracy,
+        // which must both recompute and emit the new limit.
+        //
+        // NOTE: the test harness's `env.events().all()` only reflects events
+        // from the most recent top-level contract invocation, so the
+        // StakeLimitUpdated check below must happen immediately after this
+        // call and before any other client call (even read-only views).
+        client.resolve_call(&call_ids[9], &1u32, &150_000_000_i128);
+
+        let event = find_event(&env, "call_registry", "StakeLimitUpdated")
+            .expect("StakeLimitUpdated was not emitted on the 10th resolution");
+        let (user, new_limit): (Address, i128) = event.2.into_val(&env);
+        assert_eq!(user, predictor);
+        assert_eq!(new_limit, 2_000_000_000);
+
+        // accuracy_bps = 10 * 10_000 / 10 = 10_000 (100%)
+        // factor_bps   = 10_000 + (10_000 * 10_000 / 10_000) = 20_000 (2.0x)
+        // volume_factor = 1.0x (predictor is still the only staker on the
+        // platform: 10 * 50_000_000 = 500_000_000 total volume / 1 unique
+        // staker == predictor's own volume)
+        // reputation_limit = 1_000_000_000 * 20_000/10_000 * 10_000/10_000
+        //                   = 2_000_000_000
+        assert_eq!(client.get_user_stake_limit(&predictor), 2_000_000_000);
+    }
+
+    #[test]
+    fn test_admin_can_set_reputation_params() {
+        let (env, client, admin, _om) = setup();
+        let _ = admin;
+
+        let config_before = client.get_config();
+        assert_eq!(config_before.base_stake_limit, 0);
+        assert_eq!(config_before.reputation_multiplier, 0);
+
+        client.set_reputation_params(&2_000_000_000_i128, &15_000u32);
+
+        // NOTE: `env.events().all()` in this test harness only reflects the
+        // most recent top-level contract invocation, so this check must
+        // happen immediately after `set_reputation_params` and before any
+        // other client call (even read-only views like `get_config`).
+        let has_base_limit_event = find_event(&env, "call_registry", "admin_params_changed")
+            .is_some();
+        assert!(has_base_limit_event);
+
+        let config_after = client.get_config();
+        assert_eq!(config_after.base_stake_limit, 2_000_000_000);
+        assert_eq!(config_after.reputation_multiplier, 15_000);
+
+        let new_user = Address::generate(&env);
+        assert_eq!(client.get_user_stake_limit(&new_user), 2_000_000_000);
+    }
+
+    #[test]
+    fn test_max_stake_per_user_still_acts_as_absolute_ceiling() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let user = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Reputation alone would allow up to base_stake_limit (new-user tier
+        // == 1_000_000_000), but the admin's absolute ceiling is stricter and
+        // must win: effective_limit = min(reputation_limit, max_stake_per_user).
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+        client.set_max_stake_per_user(&300_000_000_i128);
+
+        assert_eq!(client.get_user_stake_limit(&user), 300_000_000);
+
+        let call = create_call_with_default_condition(
+            &client,
+            &creator,
+            &stake_token,
+            &100_000_000_i128,
+            &2000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+        let updated = client.stake_on_call(&user, &call.id, &300_000_000_i128, &1);
+        assert_eq!(updated.outcome_stakes.get(1).unwrap_or(0), 300_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stake exceeds reputation-weighted stake limit")]
+    fn test_max_stake_per_user_ceiling_rejects_excess() {
+        let (env, admin, outcome_manager, creator) = create_test_env();
+        let user = Address::generate(&env);
+        let contract_id = env.register_contract(None, CallRegistry);
+        let client = CallRegistryClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &outcome_manager, &TEST_MIN_STAKE);
+        env.ledger().set_timestamp(1000);
+
+        let stake_token = env.register_contract(None, MockToken);
+        client.whitelist_token(&stake_token);
+        let token_address = Address::generate(&env);
+        let pair_id = Bytes::from_slice(&env, b"USDC/XLM");
+        let metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        client.set_reputation_params(&1_000_000_000_i128, &10_000u32);
+        client.set_max_stake_per_user(&300_000_000_i128);
+
+        let call = create_call_with_default_condition(
+            &client,
+            &creator,
+            &stake_token,
+            &100_000_000_i128,
+            &2000u64,
+            &token_address,
+            &pair_id,
+            &metadata_hash,
+            &2,
+        );
+        client.stake_on_call(&user, &call.id, &300_000_001_i128, &1);
     }
 }
 
@@ -3248,4 +3684,6 @@ mod sep10_tests {
         let user = Address::generate(&env);
         assert_eq!(client.get_sep10_home_domain(&user), None);
     }
+
+
 }

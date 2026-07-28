@@ -66,4 +66,13 @@ pub enum OutcomeError {
     InvalidBasketConditionIndex = 30,
     /// The target call is not a basket call.
     NotBasketCall = 31,
+    /// A price observation's timestamp falls outside `[call_end_ts -
+    /// twap_window_secs, call_end_ts]`.
+    ObservationOutsideWindow = 29,
+    /// `claim_on_behalf` was called by an address that is not the original
+    /// winner's designated recovery address (or none has been set).
+    NotRecoveryAgent = 30,
+    /// `claim_on_behalf` was called before `recovery_grace_period` has
+    /// elapsed since the call was settled.
+    RecoveryGracePeriodNotElapsed = 31,
 }

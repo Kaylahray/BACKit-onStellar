@@ -25,10 +25,12 @@ use events::{
     emit_admin_params_changed, emit_batch_payout_started, emit_claimable_balance_created,
     emit_contract_upgraded, emit_fee_collected, emit_outcome_disputed, emit_outcome_finalized,
     emit_outcome_submitted, emit_payout_claimed, emit_price_observation_submitted,
+    emit_recovery_address_removed, emit_recovery_address_set, emit_recovery_claimed,
+    emit_twap_computed,
 };
 use storage::{
-    set_dispute_window, set_max_submission_delay, InstanceKey, OracleVote, Outcome, PersistentKey,
-    PriceObservation, SignedBasketCondition, TempKey,
+    get_twap_config, set_dispute_window, set_max_submission_delay, set_twap_config, InstanceKey,
+    OracleVote, Outcome, PersistentKey, PriceObservation, TempKey,
 };
 use verification::{build_message, verify_signature};
 
@@ -188,6 +190,16 @@ fn require_call_settled(env: &Env, call_id: u64) {
     }
 }
 
+/// Read the settlement timestamp recorded for `call_id`. Both finalization
+/// paths (`Self::finalize` and `finalize_outcome`) write this at the same
+/// moment they write `FinalOutcome`, so by the time `require_call_settled`
+/// has passed this should always be present. Fall back to "now" (i.e. an
+/// elapsed time of zero) as a fail-safe if it's somehow missing, so a
+/// missing timestamp can never be mistaken for an *elapsed* grace period.
+fn get_settled_at(env: &Env, call_id: u64) -> u64 {
+    storage::get_settled_at_opt(env, call_id).unwrap_or_else(|| env.ledger().timestamp())
+}
+
 fn get_fee_config(env: &Env) -> (u32, Address) {
     let fee_bps: u32 = env
         .storage()
@@ -273,6 +285,61 @@ fn evaluate_condition(condition: &LeafConditionType, start_price: i128, end_pric
             end_price >= *min && end_price <= *max
         }
     }
+/// Attempts to compute a valid TWAP from `observations`, extending the last
+/// observation's price forward to `end_ts`:
+///
+/// `TWAP = (p1*(t2-t1) + p2*(t3-t2) + ... + pN*(end_ts-tN)) / (end_ts-t1)`
+///
+/// Returns `None` — never panics — if there are fewer than
+/// `min_observations`, if the observations don't span at least half of
+/// `window_secs`, or on arithmetic overflow. Either signal means the TWAP
+/// isn't trustworthy and the caller should fall back to a single-point
+/// price instead.
+fn try_compute_twap(
+    observations: &Vec<PriceObservation>,
+    end_ts: u64,
+    window_secs: u64,
+    min_observations: u32,
+) -> Option<i128> {
+    let n = observations.len();
+    if n < min_observations {
+        return None;
+    }
+
+    let first = observations.get(0).unwrap();
+    let last = observations.get(n - 1).unwrap();
+    let span = last.timestamp.saturating_sub(first.timestamp);
+    if span < window_secs / 2 {
+        return None;
+    }
+
+    let mut weighted_sum: i128 = 0;
+    let mut total_time: i128 = 0;
+
+    for i in 0..n {
+        let obs = observations.get(i).unwrap();
+        let next_ts = if i + 1 < n {
+            observations.get(i + 1).unwrap().timestamp
+        } else {
+            end_ts
+        };
+        if next_ts < obs.timestamp {
+            // end_ts strictly before the last observation, or malformed
+            // order — genuinely invalid. `next_ts == obs.timestamp` is
+            // legitimate (a zero-length tail when end_ts lands exactly on
+            // the last observation) and contributes zero weight below.
+            return None;
+        }
+        let dt = (next_ts - obs.timestamp) as i128;
+        weighted_sum = obs.price.checked_mul(dt)?.checked_add(weighted_sum)?;
+        total_time = total_time.checked_add(dt)?;
+    }
+
+    if total_time == 0 {
+        return None;
+    }
+
+    weighted_sum.checked_div(total_time)
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -774,6 +841,7 @@ impl OutcomeManager {
         env.storage()
             .instance()
             .set(&InstanceKey::FinalOutcome(outcome.call_id), &outcome);
+        storage::set_settled_at(env, outcome.call_id, env.ledger().timestamp());
 
         registry_resolve_call(
             env,
@@ -858,6 +926,133 @@ impl OutcomeManager {
 
         emit_claimable_balance_created(&env, call_id, &staker, &balance_id, payout);
         emit_payout_claimed(&env, call_id, &staker, payout);
+    }
+
+    // ─── Social recovery ───────────────────────────────────────────────────
+
+    /// Designate a recovery address for `user`. If `user` doesn't claim a
+    /// payout within `recovery_grace_period` seconds of settlement, the
+    /// designated recovery address may claim it on `user`'s behalf via
+    /// `claim_on_behalf`. Must be signed by `user`. Setting a recovery
+    /// address does not remove `user`'s own right to claim at any time.
+    pub fn set_recovery_address(env: Env, user: Address, recovery_address: Address) {
+        user.require_auth();
+        storage::set_recovery_address(&env, user.clone(), recovery_address.clone());
+        emit_recovery_address_set(&env, &user, &recovery_address);
+    }
+
+    /// Remove `user`'s designated recovery address, if any. Must be signed
+    /// by `user`.
+    pub fn remove_recovery_address(env: Env, user: Address) {
+        user.require_auth();
+        storage::remove_recovery_address(&env, user.clone());
+        emit_recovery_address_removed(&env, &user);
+    }
+
+    /// Return `user`'s designated recovery address, if one has been set.
+    pub fn get_recovery_address(env: Env, user: Address) -> Option<Address> {
+        storage::get_recovery_address_opt(&env, user)
+    }
+
+    /// Set the grace period (seconds) that must elapse after a call is
+    /// settled before a designated recovery address may claim an unclaimed
+    /// payout on the original winner's behalf (admin only). Default 30 days.
+    pub fn set_recovery_grace_period(env: Env, new_period_secs: u64) {
+        require_admin(&env);
+        storage::set_recovery_grace_period(&env, new_period_secs);
+        emit_admin_params_changed(&env, new_period_secs);
+    }
+
+    /// Return the current recovery grace period, in seconds.
+    pub fn get_recovery_grace_period(env: Env) -> u64 {
+        storage::get_recovery_grace_period(&env)
+    }
+
+    /// Claim a winning staker's payout on their behalf, as their designated
+    /// recovery address, once `recovery_grace_period` has elapsed since the
+    /// call settled and the original winner hasn't claimed it themselves.
+    ///
+    /// Reuses the exact same payout computation as `claim_payout`
+    /// (`compute_payout_parts`) and the exact same `Claimed(call_id, ..)`
+    /// reentrancy-guard flag — marked against `original_winner` (not
+    /// `recovery_agent`) so the original winner can't *also* claim
+    /// afterward. The computed payout is transferred `to = recovery_agent`.
+    pub fn claim_on_behalf(
+        env: Env,
+        registry: Address,
+        call_id: u64,
+        recovery_agent: Address,
+        original_winner: Address,
+        staker_winning_stake: i128,
+        total_winning_stake: i128,
+        total_losing_stake: i128,
+    ) {
+        if is_paused(&env) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::ContractPaused);
+        }
+
+        recovery_agent.require_auth();
+
+        let stored_recovery = storage::get_recovery_address_opt(&env, original_winner.clone());
+        if stored_recovery.as_ref() != Some(&recovery_agent) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::NotRecoveryAgent);
+        }
+
+        require_call_settled(&env, call_id);
+
+        // Check the definitive "already claimed" state before the
+        // time-based grace-period gate, so a winner who already claimed
+        // always sees `AlreadyClaimed` rather than a confusing
+        // `RecoveryGracePeriodNotElapsed` if the grace period also hasn't
+        // elapsed yet.
+        let claimed_key = InstanceKey::Claimed(call_id, original_winner.clone());
+        if env.storage().instance().has(&claimed_key) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::AlreadyClaimed);
+        }
+
+        let settled_at = get_settled_at(&env, call_id);
+        let grace_period = storage::get_recovery_grace_period(&env);
+        let elapsed = env.ledger().timestamp().saturating_sub(settled_at);
+        if elapsed < grace_period {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::RecoveryGracePeriodNotElapsed);
+        }
+
+        if staker_winning_stake <= 0 {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::NothingToClaim);
+        }
+        if total_winning_stake <= 0 {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidWinningStake);
+        }
+
+        let (fee_bps, fee_collector) = get_fee_config(&env);
+        let total_fee = compute_total_fee(&env, total_losing_stake, fee_bps);
+        let net_losing = total_losing_stake
+            .checked_sub(total_fee)
+            .unwrap_or_else(|| overflow(&env));
+
+        let (staker_fee_share, payout) = compute_payout_parts(
+            &env,
+            staker_winning_stake,
+            total_winning_stake,
+            total_fee,
+            net_losing,
+        );
+
+        // Mark as claimed against the ORIGINAL WINNER before external calls
+        // (reentrancy guard) — this is the same flag `claim_payout` checks,
+        // so the original winner can no longer claim once the recovery
+        // agent has claimed on their behalf, and vice versa.
+        env.storage().instance().set(&claimed_key, &true);
+
+        if staker_fee_share > 0 {
+            registry_release_escrow(&env, &registry, call_id, &fee_collector, staker_fee_share);
+            emit_fee_collected(&env, call_id, staker_fee_share, &fee_collector);
+        }
+
+        // The actual tokens go to the recovery agent, not the original winner.
+        registry_release_escrow(&env, &registry, call_id, &recovery_agent, payout);
+
+        emit_recovery_claimed(&env, &recovery_agent, &original_winner, call_id, payout);
     }
 
     /// Batch-create claimable balances for multiple winning stakers (admin only).
@@ -1064,6 +1259,7 @@ impl OutcomeManager {
         env.storage()
             .instance()
             .set(&InstanceKey::FinalOutcome(call_id), &pending);
+        storage::set_settled_at(&env, call_id, env.ledger().timestamp());
         let registry = get_registry(&env);
         registry_resolve_call(
             &env,
@@ -1199,6 +1395,7 @@ impl OutcomeManager {
     pub fn submit_price_observation(
         env: Env,
         call_id: u64,
+        call_end_ts: u64,
         observation: PriceObservation,
         oracle_pubkey: BytesN<32>,
         signature: BytesN<64>,
@@ -1216,6 +1413,12 @@ impl OutcomeManager {
             &observation.timestamp.to_be_bytes(),
         ));
         verify_signature(&env, &oracle_pubkey, &signature, &raw);
+
+        let (window_secs, _) = get_twap_config(&env);
+        let window_start = call_end_ts.saturating_sub(window_secs);
+        if observation.timestamp < window_start || observation.timestamp > call_end_ts {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::ObservationOutsideWindow);
+        }
 
         let key = TempKey::PriceObservations(call_id);
         let mut observations: Vec<PriceObservation> = env
@@ -1238,41 +1441,60 @@ impl OutcomeManager {
         emit_price_observation_submitted(&env, call_id, &oracle_pubkey, price, timestamp);
     }
 
-    pub fn compute_twap(env: Env, call_id: u64) -> i128 {
+    /// Computes the TWAP for `call_id` over its stored observations,
+    /// extended to `end_ts`. Panics (via typed `OutcomeError`) if there
+    /// aren't enough observations to trust the result — see
+    /// [`Self::resolve_price`] for a non-panicking fallback-aware variant.
+    pub fn compute_twap(env: Env, call_id: u64, end_ts: u64) -> i128 {
         let key = TempKey::PriceObservations(call_id);
         let observations: Vec<PriceObservation> = match env.storage().temporary().get(&key) {
             Some(observations) => observations,
             None => soroban_sdk::panic_with_error!(&env, OutcomeError::NoPriceObservations),
         };
 
-        let n = observations.len();
-        if n < 3 {
-            soroban_sdk::panic_with_error!(&env, OutcomeError::InsufficientPriceObservations);
+        let (window_secs, min_observations) = get_twap_config(&env);
+        match try_compute_twap(&observations, end_ts, window_secs, min_observations) {
+            Some(twap) => twap,
+            None => soroban_sdk::panic_with_error!(&env, OutcomeError::InsufficientPriceObservations),
         }
+    }
 
-        let mut weighted_sum: i128 = 0;
-        let mut total_time: i128 = 0;
+    /// Set the TWAP window length (seconds before a call's `end_ts`) and
+    /// the minimum observation count required for a TWAP to be trusted
+    /// (admin only).
+    pub fn set_twap_config(env: Env, window_secs: u64, min_observations: u32) {
+        require_admin(&env);
+        set_twap_config(&env, window_secs, min_observations);
+        emit_admin_params_changed(&env, window_secs);
+    }
 
-        for i in 0..(n - 1) {
-            let obs_i = observations.get(i).unwrap();
-            let obs_next = observations.get(i + 1).unwrap();
-            let dt = (obs_next.timestamp - obs_i.timestamp) as i128;
-            weighted_sum = obs_i
-                .price
-                .checked_mul(dt)
-                .unwrap_or_else(|| overflow(&env))
-                .checked_add(weighted_sum)
-                .unwrap_or_else(|| overflow(&env));
-            total_time = total_time.checked_add(dt).unwrap_or_else(|| overflow(&env));
+    /// Return the current `(window_secs, min_observations)` TWAP config.
+    pub fn get_twap_config(env: Env) -> (u64, u32) {
+        get_twap_config(&env)
+    }
+
+    /// Returns the resolution price for `call_id`: the TWAP over its final
+    /// observations if there are enough to trust, otherwise
+    /// `single_point_price` unchanged (e.g. an oracle's direct submission).
+    /// Never panics — a market with no or insufficient observations
+    /// (oracle downtime, a brand-new market) resolves exactly as it did
+    /// before TWAP existed.
+    pub fn resolve_price(env: Env, call_id: u64, end_ts: u64, single_point_price: i128) -> i128 {
+        let key = TempKey::PriceObservations(call_id);
+        let observations: Vec<PriceObservation> = env
+            .storage()
+            .temporary()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let (window_secs, min_observations) = get_twap_config(&env);
+        match try_compute_twap(&observations, end_ts, window_secs, min_observations) {
+            Some(twap_price) => {
+                emit_twap_computed(&env, call_id, twap_price, observations.len());
+                twap_price
+            }
+            None => single_point_price,
         }
-
-        if total_time == 0 {
-            soroban_sdk::panic_with_error!(&env, OutcomeError::ZeroTimeWindow);
-        }
-
-        weighted_sum
-            .checked_div(total_time)
-            .unwrap_or_else(|| overflow(&env))
     }
 
     pub fn schedule_oracle_removal(env: Env, oracle_pubkey: BytesN<32>, effective_ledger: u32) {

@@ -14,4 +14,10 @@ pub enum FactoryError {
     ContractPaused = 8,
     MarketWasmNotSet = 9,
     MarketNotFound = 10,
+    StrategyNotFound = 11,
+    StrategyAlreadyExecuted = 12,
+    StrategyCancelled = 13,
+    StrategyExpired = 14,
+    TooManyActions = 15,
+    StrategyNotExecutable = 16,
 }

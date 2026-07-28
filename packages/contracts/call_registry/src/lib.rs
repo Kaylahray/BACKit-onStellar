@@ -80,6 +80,7 @@ mod events;
 #[cfg(test)]
 mod fuzz_tests;
 mod governance;
+mod reputation;
 mod sep10;
 mod shares;
 mod storage;
@@ -187,6 +188,8 @@ impl CallRegistry {
             resolution_grace_period: 604800,
             admin_set: Vec::new(&env),
             admin_threshold: 1,
+            base_stake_limit: 0,
+            reputation_multiplier: 0,
         };
 
         set_config(&env, &config);
@@ -619,9 +622,24 @@ impl CallRegistry {
         let current_staker_stake = outcome_stakers.get(staker_key.clone()).unwrap_or(0);
         let updated_staker_stake = current_staker_stake + amount;
 
-        // Per-user stake cap
-        if config.max_stake_per_user > 0 && updated_staker_stake > config.max_stake_per_user {
-            panic!("Stake exceeds max_stake_per_user cap");
+        // Reputation-weighted individual stake cap (per call, per position).
+        // Replaces the old flat `max_stake_per_user`-only check: the user's
+        // personal limit now scales with their on-chain prediction accuracy
+        // and historical stake volume (see `reputation` module), while
+        // `max_stake_per_user`, if configured, still acts as an absolute
+        // outer ceiling on top of it.
+        let staker_stats = get_creator_stats(&env, &staker);
+        let staker_volume = get_user_total_stake_volume(&env, &staker);
+        let effective_limit = reputation::effective_stake_limit(
+            &env,
+            config.base_stake_limit,
+            config.reputation_multiplier,
+            config.max_stake_per_user,
+            &staker_stats,
+            staker_volume,
+        );
+        if updated_staker_stake > effective_limit {
+            panic!("Stake exceeds reputation-weighted stake limit");
         }
 
         // Transfer tokens in — supports both native XLM and SAC-wrapped tokens.
@@ -651,6 +669,7 @@ impl CallRegistry {
         set_call(&env, &call);
         add_staker_call(&env, &staker, call_id);
         record_stake(&env, &staker, amount);
+        record_user_stake_volume(&env, &staker, amount);
         extend_storage_ttl(&env);
 
         // Emit distinct XLM event so the indexer can differentiate XLM from USDC volume.
@@ -774,8 +793,37 @@ impl CallRegistry {
 
     /// Set the maximum individual stake per user per position per call (admin only).
     /// Pass `0` to remove the cap.
+    ///
+    /// This remains a separate, absolute ceiling on top of the
+    /// reputation-weighted personal limit — see `set_reputation_params` and
+    /// the `reputation` module doc comment for how the two combine.
     pub fn set_max_stake_per_user(env: Env, new_max: i128) {
         admin::set_max_stake_per_user(env, new_max);
+    }
+
+    /// Set reputation-weighted staking-limit parameters (admin only).
+    ///
+    /// * `base_limit` — the personal stake ceiling (per call, per position)
+    ///   for brand-new users, and the baseline the reputation multiplier
+    ///   scales from. Pass `0` to disable the reputation-weighted system
+    ///   entirely (only `max_stake_per_user`, if any, will apply).
+    /// * `multiplier` — reputation multiplier in basis points (`10_000` ==
+    ///   `1.0`). See the `reputation` module for the exact fixed-point
+    ///   formula.
+    ///
+    /// # Panics
+    /// * Contract not initialized.
+    /// * `base_limit` is negative.
+    pub fn set_reputation_params(env: Env, base_limit: i128, multiplier: u32) {
+        reputation::set_reputation_params(env, base_limit, multiplier);
+    }
+
+    /// View: the reputation-weighted individual stake limit (per call, per
+    /// position) currently enforced for `user` in `stake_on_call`, after
+    /// combining the reputation formula with `max_stake_per_user` (if
+    /// configured). Returns `i128::MAX` when no cap applies at all.
+    pub fn get_user_stake_limit(env: Env, user: Address) -> i128 {
+        reputation::get_user_stake_limit(&env, &user)
     }
 
     /// Set the minimum stake required per staking action (admin only).
@@ -854,6 +902,7 @@ impl CallRegistry {
 
         // Track creator reputation: increment total_resolved and conditionally total_correct
         let mut creator_stats = get_creator_stats(&env, &call.creator);
+        let old_creator_stats = creator_stats.clone();
         creator_stats.total_resolved += 1;
 
         // Check if creator staked on the winning position
@@ -868,6 +917,20 @@ impl CallRegistry {
         }
 
         set_creator_stats(&env, &call.creator, &creator_stats);
+
+        // Reputation stats just changed — recompute the creator's
+        // reputation-weighted stake limit and emit `StakeLimitUpdated` if it
+        // actually moved (e.g. crossing the "proven user" resolved-call
+        // threshold, or accuracy shifting enough to change the limit).
+        let creator_volume = get_user_total_stake_volume(&env, &call.creator);
+        reputation::maybe_emit_stake_limit_updated(
+            &env,
+            &call.creator,
+            &config,
+            &old_creator_stats,
+            &creator_stats,
+            creator_volume,
+        );
 
         set_call(&env, &call);
         extend_storage_ttl(&env);

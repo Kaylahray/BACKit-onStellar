@@ -197,6 +197,17 @@ pub struct ContractConfig {
     pub admin_set: Vec<Address>,
     /// Minimum number of admin signatures required. Default: 1 (backward compatible).
     pub admin_threshold: u32,
+    /// Baseline individual stake limit (per call, per position) used by the
+    /// reputation-weighted staking-limit system (see `crate::reputation`).
+    /// `0` disables reputation-weighted limits entirely (unlimited, subject
+    /// only to `max_stake_per_user` if that is separately configured).
+    /// Default: 0.
+    pub base_stake_limit: i128,
+    /// Reputation multiplier in basis points (`10_000` == `1.0`) applied to a
+    /// user's on-chain prediction accuracy when computing their individual
+    /// reputation-weighted stake limit. See `crate::reputation` for the exact
+    /// fixed-point formula. Default: 0.
+    pub reputation_multiplier: u32,
 }
 
 /// Contract-wide aggregated statistics for dashboards.

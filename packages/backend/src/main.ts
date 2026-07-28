@@ -4,14 +4,14 @@ import { Logger } from 'nestjs-pino';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
+import { configureHttpSecurity } from './security/http-security';
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useLogger(app.get(Logger)); // Use pino logger
 
-  app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true,
-  });
+  app.enableShutdownHooks();
+  configureHttpSecurity(app);
 
   // Global validation pipe
   app.useGlobalPipes(
