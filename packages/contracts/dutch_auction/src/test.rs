@@ -1,4 +1,5 @@
 #![cfg(test)]
+extern crate std;
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
@@ -30,11 +31,11 @@ fn default_ledger(ts: u64) -> LedgerInfo {
     }
 }
 
-fn init_contract(
-    env: &Env,
-    admin: &Address,
-    outcome_manager: &Address,
-) -> DutchAuctionClient {
+fn init_contract<'a>(
+    env: &'a Env,
+    admin: &'a Address,
+    outcome_manager: &'a Address,
+) -> DutchAuctionClient<'a> {
     let contract_id = env.register(DutchAuction, ());
     let client = DutchAuctionClient::new(env, &contract_id);
     client.initialize(admin, outcome_manager, &3600, &86400, &100);

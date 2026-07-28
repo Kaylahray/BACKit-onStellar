@@ -123,7 +123,7 @@ impl DutchAuction {
             };
         }
         match info.condition_type {
-            1 => Ok(info.start_price * 2 * (duration - elapsed) / duration),
+            1 => Ok(info.start_price * 2 * (duration as i128 - elapsed as i128) / duration as i128),
             2 => {
                 let numerator =
                     info.start_price * (duration as i128 + 3 * elapsed as i128);
