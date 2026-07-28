@@ -2,171 +2,173 @@
 
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::Address as _,
+    token::StellarAssetClient as TokenAdminClient,
+    Address, Env,
+};
 
-use crate::IndexFund;
+use crate::{IndexFund, IndexFundClient};
+
+type TokenClient = soroban_sdk::token::Client;
 
 fn create_test_env() -> (Env, Address, Address, Address) {
     let env = Env::default();
     let admin = Address::generate(&env);
-    let stake_token = Address::generate(&env);
+    let stake_token = env.register_stellar_asset_contract_v2(admin.clone());
     let factory = Address::generate(&env);
     (env, admin, stake_token, factory)
 }
 
-fn setup_fund(env: &Env, admin: &Address, stake_token: &Address, factory: &Address) {
+fn setup_fund(env: &Env, admin: &Address, stake_token: &Address, factory: &Address) -> IndexFundClient {
     env.mock_all_auths();
-    IndexFund::initialize(
-        env.clone(),
-        admin.clone(),
-        stake_token.clone(),
-        factory.clone(),
-        3600,  // rebalance every hour
-        50,    // 0.5 % deposit fee
-        50,    // 0.5 % withdraw fee
-    );
+    let contract_id = env.register(IndexFund, ());
+    let fund = IndexFundClient::new(env, &contract_id);
+    fund.initialize(admin, stake_token, factory, &3600, &50, &50);
+    fund
+}
+
+fn mint_tokens(env: &Env, token: &Address, to: &Address, amount: i128) {
+    TokenAdminClient::new(env, token).mint(to, &amount);
 }
 
 #[test]
 fn test_initialize() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
-
-    assert_eq!(IndexFund::get_admin(env.clone()).unwrap(), admin);
-    assert_eq!(IndexFund::get_stake_token(env.clone()).unwrap(), stake_token);
-    assert_eq!(IndexFund::get_nav(env.clone()).unwrap(), 0);
-    assert_eq!(IndexFund::get_index_composition(env.clone()).unwrap().len(), 0);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
+    assert_eq!(fund.get_admin(), admin);
+    assert_eq!(fund.get_stake_token(), stake_token);
+    assert_eq!(fund.get_nav(), 0);
+    assert!(fund.get_index_composition().len() == 0);
 }
 
 #[test]
 #[should_panic(expected = "AlreadyInitialized")]
 fn test_double_initialize() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
+    fund.initialize(&admin, &stake_token, &factory, &3600, &50, &50);
 }
 
 #[test]
 fn test_first_deposit_mints_at_par() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user = Address::generate(&env);
     env.mock_all_auths();
+    mint_tokens(&env, &stake_token, &user, 1_000_000_000);
 
-    // First deposit: 1000 USDC -> 1000 * 1e7 INDEX tokens
-    let index_tokens = IndexFund::deposit(env.clone(), user.clone(), 1_000_000_000).unwrap(); // 1000 USDC (6 dec)
+    let index_tokens = fund.deposit(&user, &1_000_000_000);
     assert_eq!(index_tokens, 1_000_000_000 * 10_000_000);
 
-    assert_eq!(IndexFund::get_user_balance(env.clone(), user), 1_000_000_000 * 10_000_000);
+    assert_eq!(fund.get_user_balance(&user), 1_000_000_000 * 10_000_000);
 }
 
 #[test]
 fn test_second_deposit_mints_proportional() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
     env.mock_all_auths();
 
-    // First deposit: 1000 USDC
-    let usdc_amount = 1_000_000_000i128; // 1000 USDC
-    let fee1 = usdc_amount * 50 / 10_000; // 0.5% fee = 5 USDC
-    let net1 = usdc_amount - fee1;
-    let index1 = IndexFund::deposit(env.clone(), user1.clone(), usdc_amount).unwrap();
+    let usdc_amount = 1_000_000_000i128;
+    let usdc_amount2 = 500_000_000i128;
+    mint_tokens(&env, &stake_token, &user1, usdc_amount);
+    mint_tokens(&env, &stake_token, &user2, usdc_amount2);
 
-    // NAV after first deposit: net1 * 1e7 / index1
-    // Since index1 = net1 * 1e7, NAV = 1e7 (i.e., 1.0)
+    let fee = usdc_amount * 50 / 10_000;
+    let net = usdc_amount - fee;
+    let index1 = fund.deposit(&user1, &usdc_amount);
 
-    // Second deposit: 500 USDC
-    let usdc_amount2 = 500_000_000i128; // 500 USDC
     let fee2 = usdc_amount2 * 50 / 10_000;
     let net2 = usdc_amount2 - fee2;
-    let index2 = IndexFund::deposit(env.clone(), user2.clone(), usdc_amount2).unwrap();
+    let index2 = fund.deposit(&user2, &usdc_amount2);
 
-    // index2 = net2 * index1 / net1
-    let expected_index2 = net2 * index1 / net1;
+    let expected_index2 = net2 * index1 / net;
     assert_eq!(index2, expected_index2);
 }
 
 #[test]
 fn test_withdraw_returns_proportional_usdc() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user = Address::generate(&env);
     env.mock_all_auths();
 
     let usdc_amount = 1_000_000_000i128;
-    let index_tokens = IndexFund::deposit(env.clone(), user.clone(), usdc_amount).unwrap();
+    mint_tokens(&env, &stake_token, &user, usdc_amount);
 
-    // Withdraw half
+    let index_tokens = fund.deposit(&user, &usdc_amount);
+
     let half = index_tokens / 2;
-    let usdc_out = IndexFund::withdraw(env.clone(), user.clone(), half).unwrap();
+    let usdc_out = fund.withdraw(&user, &half);
 
-    // Should get approximately half of net USDC back (minus withdraw fee)
     let fee = usdc_amount * 50 / 10_000;
     let net_usdc = usdc_amount - fee;
     let expected_gross = net_usdc / 2;
-    let expected_fee = expected_gross * 50 / 10_000;
-    let expected_net = expected_gross - expected_fee;
+    let expected_withdraw_fee = expected_gross * 50 / 10_000;
+    let expected_net = expected_gross - expected_withdraw_fee;
     assert_eq!(usdc_out, expected_net);
 
-    // Remaining balance should be half
-    assert_eq!(IndexFund::get_user_balance(env.clone(), user), index_tokens - half);
+    assert_eq!(fund.get_user_balance(&user), index_tokens - half);
 }
 
 #[test]
 #[should_panic(expected = "InvalidAmount")]
 fn test_deposit_zero() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user = Address::generate(&env);
     env.mock_all_auths();
-    IndexFund::deposit(env.clone(), user, 0);
+    fund.deposit(&user, &0);
 }
 
 #[test]
 #[should_panic(expected = "InsufficientLiquidity")]
 fn test_withdraw_more_than_balance() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user = Address::generate(&env);
     env.mock_all_auths();
+    mint_tokens(&env, &stake_token, &user, 1_000_000_000);
 
-    let index_tokens = IndexFund::deposit(env.clone(), user.clone(), 1_000_000_000).unwrap();
-    IndexFund::withdraw(env.clone(), user, index_tokens + 1);
+    let index_tokens = fund.deposit(&user, &1_000_000_000);
+    fund.withdraw(&user, &(index_tokens + 1));
 }
 
 #[test]
 fn test_nav_after_first_deposit() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user = Address::generate(&env);
     env.mock_all_auths();
+    mint_tokens(&env, &stake_token, &user, 1_000_000_000);
 
-    IndexFund::deposit(env.clone(), user, 1_000_000_000);
+    fund.deposit(&user, &1_000_000_000);
 
-    // NAV should be 1e7 (1.0 USDC per INDEX token scaled by 1e7)
-    let nav = IndexFund::get_nav(env.clone()).unwrap();
+    let nav = fund.get_nav();
     assert_eq!(nav, 10_000_000);
 }
 
 #[test]
 fn test_performance_after_deposit() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
     let user = Address::generate(&env);
     env.mock_all_auths();
+    mint_tokens(&env, &stake_token, &user, 1_000_000_000);
 
-    IndexFund::deposit(env.clone(), user.clone(), 1_000_000_000);
+    fund.deposit(&user, &1_000_000_000);
 
-    let perf = IndexFund::get_index_performance(env.clone()).unwrap();
+    let perf = fund.get_index_performance();
     assert_eq!(perf.nav, 10_000_000);
     assert_eq!(perf.total_markets, 0);
     assert!(perf.total_aum > 0);
@@ -176,9 +178,9 @@ fn test_performance_after_deposit() {
 #[test]
 fn test_get_index_composition_empty() {
     let (env, admin, stake_token, factory) = create_test_env();
-    setup_fund(&env, &admin, &stake_token, &factory);
+    let fund = setup_fund(&env, &admin, &stake_token, &factory);
 
-    let composition = IndexFund::get_index_composition(env.clone()).unwrap();
+    let composition = fund.get_index_composition();
     assert_eq!(composition.len(), 0);
 }
 
@@ -187,13 +189,7 @@ fn test_get_index_composition_empty() {
 fn test_initialize_fee_too_high() {
     let (env, admin, stake_token, factory) = create_test_env();
     env.mock_all_auths();
-    IndexFund::initialize(
-        env.clone(),
-        admin,
-        stake_token,
-        factory,
-        3600,
-        5000, // 50% fee – way too high
-        50,
-    );
+    let contract_id = env.register(IndexFund, ());
+    let fund = IndexFundClient::new(&env, &contract_id);
+    fund.initialize(&admin, &stake_token, &factory, &3600, &5000, &50);
 }
