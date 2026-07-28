@@ -19,4 +19,6 @@ pub enum MarketError {
     InvalidOutcomeCount = 13,
     StakingCutoffActive = 15,
     InvalidCallId = 16,
+    ReserveDiscrepancy = 17,
+    NotEligibleForBonus = 18,
 }

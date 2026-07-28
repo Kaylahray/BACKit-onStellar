@@ -19,7 +19,11 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, Map};
 use storage::*;
 
 use errors::MarketError;
-use events::{emit_call_created, emit_call_resolved, emit_market_initialized, emit_stake_added};
+use events::{
+    emit_call_created, emit_call_resolved, emit_early_staker_bonus, emit_market_initialized,
+    emit_reserve_discrepancy, emit_reserve_verification, emit_stake_added,
+};
+use types::ReserveVerification;
 
 #[cfg(not(test))]
 #[inline]
@@ -121,6 +125,8 @@ impl PredictionMarket {
             max_stake_per_user,
             staking_cutoff_secs,
             paused: false,
+            early_staker_bonus_window_secs: 3600,
+            early_staker_bonus_bps: 200,
         };
         set_config(&env, &config);
 
@@ -235,6 +241,18 @@ impl PredictionMarket {
 
         set_user_stake(&env, &staker, position, updated_staker_stake);
         set_call(&env, &call);
+
+        let current_timestamp = env.ledger().timestamp();
+        let existing_ts = get_user_stake_timestamp(&env, &staker, position);
+        if existing_ts == 0 {
+            set_user_stake_timestamp(&env, &staker, position, current_timestamp);
+            let bonus_window = config.early_staker_bonus_window_secs;
+            if current_timestamp < call.created_at + bonus_window {
+                let count = get_early_staker_count(&env);
+                set_early_staker_count(&env, count + 1);
+            }
+        }
+
         emit_stake_added(&env, call_id, &staker, amount, position);
 
         storage::release_lock(&env);
@@ -346,5 +364,109 @@ impl PredictionMarket {
     pub fn get_factory(env: Env) -> Result<Address, MarketError> {
         let config = get_config(&env).ok_or(MarketError::NotInitialized)?;
         Ok(config.factory)
+    }
+
+    /// #498: Check if a staker is eligible for the early staker bonus.
+    pub fn is_eligible_early_bonus(
+        env: Env,
+        _call_id: u64,
+        staker: Address,
+        position: u32,
+    ) -> Result<bool, MarketError> {
+        let config = get_config(&env).ok_or(MarketError::NotInitialized)?;
+        let call = get_call(&env).ok_or(MarketError::CallNotFound)?;
+
+        if get_user_has_withdrawn(&env, &staker, position) {
+            return Ok(false);
+        }
+
+        let stake_ts = get_user_stake_timestamp(&env, &staker, position);
+        if stake_ts == 0 {
+            return Ok(false);
+        }
+
+        let bonus_deadline = call.created_at + config.early_staker_bonus_window_secs;
+        Ok(stake_ts < bonus_deadline)
+    }
+
+    /// #498: Get the number of early stakers.
+    pub fn get_early_staker_count(env: Env) -> Result<u64, MarketError> {
+        Ok(storage::get_early_staker_count(&env))
+    }
+
+    /// #498: Get the total early staker bonus paid.
+    pub fn get_total_bonus_paid(env: Env) -> Result<i128, MarketError> {
+        Ok(storage::get_total_early_staker_bonus_paid(&env))
+    }
+
+    /// #497: Verify on-chain reserves against total stakes.
+    pub fn verify_reserves(
+        env: Env,
+        token_address: Address,
+    ) -> Result<ReserveVerification, MarketError> {
+        let config = get_config(&env).ok_or(MarketError::NotInitialized)?;
+        let call = get_call(&env).ok_or(MarketError::CallNotFound)?;
+
+        let contract_address = env.current_contract_address();
+        let balance_on_chain = token::Client::new(&env, &token_address).balance(&contract_address);
+
+        let mut total_staked: i128 = 0;
+        for i in 1..=call.outcome_count {
+            total_staked += call.outcome_stakes.get(i).unwrap_or(0);
+        }
+
+        let total_escrowed: i128 = 0;
+        let discrepancy = balance_on_chain - total_staked - total_escrowed;
+        let is_fully_reserved = discrepancy == 0;
+
+        let verification = ReserveVerification {
+            balance_on_chain,
+            total_staked,
+            total_escrowed,
+            is_fully_reserved,
+            discrepancy,
+        };
+
+        emit_reserve_verification(
+            &env,
+            config.call_id,
+            balance_on_chain,
+            total_staked,
+            is_fully_reserved,
+        );
+
+        if !is_fully_reserved {
+            emit_reserve_discrepancy(&env, config.call_id, discrepancy);
+        }
+
+        Ok(verification)
+    }
+
+    /// #497: Get current reserve status (view function).
+    pub fn get_reserve_status(
+        env: Env,
+    ) -> Result<ReserveVerification, MarketError> {
+        let config = get_config(&env).ok_or(MarketError::NotInitialized)?;
+        let call = get_call(&env).ok_or(MarketError::CallNotFound)?;
+
+        let contract_address = env.current_contract_address();
+        let balance_on_chain =
+            token::Client::new(&env, &call.stake_token).balance(&contract_address);
+
+        let mut total_staked: i128 = 0;
+        for i in 1..=call.outcome_count {
+            total_staked += call.outcome_stakes.get(i).unwrap_or(0);
+        }
+
+        let total_escrowed: i128 = 0;
+        let discrepancy = balance_on_chain - total_staked - total_escrowed;
+
+        Ok(ReserveVerification {
+            balance_on_chain,
+            total_staked,
+            total_escrowed,
+            is_fully_reserved: discrepancy == 0,
+            discrepancy,
+        })
     }
 }

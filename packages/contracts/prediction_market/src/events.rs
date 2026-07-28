@@ -59,3 +59,35 @@ pub fn emit_call_created(
         ),
     );
 }
+
+pub fn emit_reserve_verification(
+    env: &Env,
+    call_id: u64,
+    balance_on_chain: i128,
+    total_staked: i128,
+    is_fully_reserved: bool,
+) {
+    env.events().publish(
+        ("prediction_market", "reserve_verification"),
+        (call_id, balance_on_chain, total_staked, is_fully_reserved),
+    );
+}
+
+pub fn emit_reserve_discrepancy(env: &Env, call_id: u64, discrepancy: i128) {
+    env.events().publish(
+        ("prediction_market", "reserve_discrepancy"),
+        (call_id, discrepancy),
+    );
+}
+
+pub fn emit_early_staker_bonus(
+    env: &Env,
+    call_id: u64,
+    staker: &Address,
+    bonus: i128,
+) {
+    env.events().publish(
+        ("prediction_market", "early_staker_bonus"),
+        (call_id, staker.clone(), bonus),
+    );
+}
