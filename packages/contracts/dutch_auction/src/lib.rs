@@ -13,7 +13,7 @@ mod test;
 use errors::DutchAuctionError;
 use events::{emit_auth_params_changed, emit_dutch_auction_settled, emit_dutch_auction_started};
 use soroban_sdk::{contract, contractimpl, Address, Env};
-use storage::{self, get_config, set_auction_info, set_config};
+use storage::{get_config, set_auction_info, set_config};
 use types::DutchAuctionConfig;
 
 fn require_admin(env: &Env) -> Result<Address, DutchAuctionError> {
