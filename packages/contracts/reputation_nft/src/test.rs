@@ -14,8 +14,9 @@ fn initialize_reputation() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(ReputationNft, (&admin,));
+    let contract_id = env.register(ReputationNft, ());
     let client = ReputationNftClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let config = client.get_config_view();
     assert_eq!(config.admin, admin);
@@ -29,8 +30,9 @@ fn award_badge_and_prevent_transfer() {
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
 
-    let contract_id = env.register(ReputationNft, (&admin,));
+    let contract_id = env.register(ReputationNft, ());
     let client = ReputationNftClient::new(&env, &contract_id);
+    client.initialize(&admin);
 
     let token_id = client.award_badge(
         &user,

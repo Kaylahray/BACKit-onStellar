@@ -14,8 +14,9 @@ fn initialize_aggregator() {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(YieldAggregator, (&admin, 1000u32));
+    let contract_id = env.register(YieldAggregator, ());
     let client = YieldAggregatorClient::new(&env, &contract_id);
+    client.initialize(&admin, &1000u32);
 
     let config = client.get_config_view();
     assert_eq!(config.admin, admin);
@@ -30,8 +31,9 @@ fn deposit_and_withdraw() {
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
 
-    let contract_id = env.register(YieldAggregator, (&admin, 1000u32));
+    let contract_id = env.register(YieldAggregator, ());
     let client = YieldAggregatorClient::new(&env, &contract_id);
+    client.initialize(&admin, &1000u32);
 
     let shares = client.deposit(&user, &1000_000000);
     assert_eq!(shares, 1000_000000);
