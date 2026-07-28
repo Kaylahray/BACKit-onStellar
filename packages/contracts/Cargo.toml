@@ -8,6 +8,7 @@ members = [
   "prediction_market",
   "prediction_market_factory",
   "parlay_betting",
+  "gas_station",
   "oracle_marketplace",
   "contracts/hello-world",
 ]
