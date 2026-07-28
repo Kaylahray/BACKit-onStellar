@@ -68,6 +68,12 @@ pub enum InstanceKey {
     /// Minimum price observations required for a TWAP to be considered
     /// valid. Default 3.
     TwapMinObservations,
+    /// Minimum confirmations for flash-loan-resistant multi-block resolution.
+    /// Default 5.
+    ResolutionConfirmations,
+    /// Minimum ledger blocks that must separate the first and last resolution
+    /// observation. Default 3.
+    ResolutionMinBlocks,
     /// Ledger timestamp (seconds) at which `call_id` was settled — i.e. the
     /// moment `FinalOutcome(call_id)` was written, via either the immediate
     /// quorum path (`Self::finalize`) or the dispute-window path
@@ -102,12 +108,25 @@ pub struct PriceObservation {
     pub price: i128,
     pub timestamp: u64,
 }
+
+/// A multi-block resolution observation from a single oracle (flash loan
+/// resistant: requires observations spanning >= `min_confirmation_blocks`).
+#[contracttype]
+#[derive(Clone)]
+pub struct ResolutionObservation {
+    pub oracle: BytesN<32>,
+    pub price: i128,
+    pub timestamp: u64,
+    pub ledger_sequence: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum TempKey {
     Submission(BytesN<32>, u64),
     VoteCount(BytesN<32>, u64),
     PriceObservations(u64),
+    ResolutionObservations(u64),
 }
 
 /// Store the CallRegistry address in instance storage.
@@ -169,6 +188,8 @@ pub fn get_max_submission_delay(env: &Env) -> u64 {
 
 pub const DEFAULT_TWAP_WINDOW_SECS: u64 = 600;
 pub const DEFAULT_TWAP_MIN_OBSERVATIONS: u32 = 3;
+pub const DEFAULT_RESOLUTION_CONFIRMATIONS: u32 = 5;
+pub const DEFAULT_MIN_CONFIRMATION_BLOCKS: u32 = 3;
 
 pub fn set_twap_config(env: &Env, window_secs: u64, min_observations: u32) {
     env.storage()
@@ -191,6 +212,31 @@ pub fn get_twap_config(env: &Env) -> (u64, u32) {
         .get(&InstanceKey::TwapMinObservations)
         .unwrap_or(DEFAULT_TWAP_MIN_OBSERVATIONS);
     (window_secs, min_observations)
+}
+
+// ─── Resolution config (flash loan resistant) ───────────────────────────────
+
+pub fn set_resolution_config(env: &Env, confirmations: u32, min_blocks: u32) {
+    env.storage()
+        .instance()
+        .set(&InstanceKey::ResolutionConfirmations, &confirmations);
+    env.storage()
+        .instance()
+        .set(&InstanceKey::ResolutionMinBlocks, &min_blocks);
+}
+
+pub fn get_resolution_config(env: &Env) -> (u32, u32) {
+    let confirmations: u32 = env
+        .storage()
+        .instance()
+        .get(&InstanceKey::ResolutionConfirmations)
+        .unwrap_or(DEFAULT_RESOLUTION_CONFIRMATIONS);
+    let min_blocks: u32 = env
+        .storage()
+        .instance()
+        .get(&InstanceKey::ResolutionMinBlocks)
+        .unwrap_or(DEFAULT_MIN_CONFIRMATION_BLOCKS);
+    (confirmations, min_blocks)
 }
 
 // ─── Social recovery ────────────────────────────────────────────────────────
