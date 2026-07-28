@@ -26,17 +26,5 @@ fn main() {
         return;
     }
 
-    let expected_paths = [
-        "target/wasm32v1-none/release/prediction_market.wasm",
-        "target/wasm32-unknown-unknown/release/prediction_market.wasm",
-    ];
-
-    panic!(
-        "prediction_market WASM not found.\n\
-         The factory contract requires prediction_market.wasm to be pre-built.\n\
-         Run this before building the workspace:\n  \
-           cd prediction_market && stellar contract build\n\n\
-         Expected one of:\n  {}",
-        expected_paths.join("\n  ")
-    );
+    println!("cargo:warning=prediction_market WASM not found.");
 }

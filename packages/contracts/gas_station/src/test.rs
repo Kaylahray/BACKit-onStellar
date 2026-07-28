@@ -22,17 +22,13 @@ fn install_market_wasm(env: &Env) -> BytesN<32> {
         release_v1.join("prediction_market.optimized.wasm"),
         release_v1.join("prediction_market.wasm"),
         release_unknown.join("prediction_market.optimized.wasm"),
+        release_unknown.join("prediction_market.wasm"),
     ];
 
     let wasm_path = candidates
         .iter()
         .find(|path| path.exists())
-        .unwrap_or_else(|| {
-            panic!(
-                "missing Soroban-compatible prediction_market WASM — run:\n  \
-                 cd packages/contracts/prediction_market && cargo build --release --target wasm32v1-none"
-            )
-        });
+        .expect("missing prediction_market WASM");
 
     let wasm_bytes = std::fs::read(wasm_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", wasm_path.display()));
