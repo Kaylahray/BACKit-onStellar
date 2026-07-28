@@ -2,8 +2,10 @@
 resolver = "2"
 members = [
   "call_registry",
+  "contracts/hello-world",
   "gas_station",
   "index_fund",
+  "launchpad",
   "lending_pool",
   "oracle_marketplace",
   "outcome_manager",

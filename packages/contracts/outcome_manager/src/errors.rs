@@ -69,4 +69,7 @@ pub enum OutcomeError {
     /// `claim_on_behalf` was called before `recovery_grace_period` has
     /// elapsed since the call was settled.
     RecoveryGracePeriodNotElapsed = 31,
+    /// The same oracle submitted a second resolution observation for the
+    /// same `call_id` via `submit_resolution_observation`.
+    DuplicateOracleObservation = 32,
 }
