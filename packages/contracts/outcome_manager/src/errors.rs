@@ -60,4 +60,7 @@ pub enum OutcomeError {
     FactoryNotSet = 27,
     /// The market address does not match the factory's registry for this call_id.
     InvalidMarket = 28,
+    /// A price observation's timestamp falls outside `[call_end_ts -
+    /// twap_window_secs, call_end_ts]`.
+    ObservationOutsideWindow = 29,
 }

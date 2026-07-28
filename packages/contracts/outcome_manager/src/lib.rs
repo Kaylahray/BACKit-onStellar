@@ -25,10 +25,11 @@ use events::{
     emit_admin_params_changed, emit_batch_payout_started, emit_claimable_balance_created,
     emit_contract_upgraded, emit_fee_collected, emit_outcome_disputed, emit_outcome_finalized,
     emit_outcome_submitted, emit_payout_claimed, emit_price_observation_submitted,
+    emit_twap_computed,
 };
 use storage::{
-    set_dispute_window, set_max_submission_delay, InstanceKey, OracleVote, Outcome, PersistentKey,
-    PriceObservation, TempKey,
+    get_twap_config, set_dispute_window, set_max_submission_delay, set_twap_config, InstanceKey,
+    OracleVote, Outcome, PersistentKey, PriceObservation, TempKey,
 };
 use verification::{build_message, verify_signature};
 
@@ -221,6 +222,63 @@ fn compute_payout_parts(
         .unwrap_or_else(|| overflow(env));
 
     (staker_fee_share, payout)
+}
+
+/// Attempts to compute a valid TWAP from `observations`, extending the last
+/// observation's price forward to `end_ts`:
+///
+/// `TWAP = (p1*(t2-t1) + p2*(t3-t2) + ... + pN*(end_ts-tN)) / (end_ts-t1)`
+///
+/// Returns `None` — never panics — if there are fewer than
+/// `min_observations`, if the observations don't span at least half of
+/// `window_secs`, or on arithmetic overflow. Either signal means the TWAP
+/// isn't trustworthy and the caller should fall back to a single-point
+/// price instead.
+fn try_compute_twap(
+    observations: &Vec<PriceObservation>,
+    end_ts: u64,
+    window_secs: u64,
+    min_observations: u32,
+) -> Option<i128> {
+    let n = observations.len();
+    if n < min_observations {
+        return None;
+    }
+
+    let first = observations.get(0).unwrap();
+    let last = observations.get(n - 1).unwrap();
+    let span = last.timestamp.saturating_sub(first.timestamp);
+    if span < window_secs / 2 {
+        return None;
+    }
+
+    let mut weighted_sum: i128 = 0;
+    let mut total_time: i128 = 0;
+
+    for i in 0..n {
+        let obs = observations.get(i).unwrap();
+        let next_ts = if i + 1 < n {
+            observations.get(i + 1).unwrap().timestamp
+        } else {
+            end_ts
+        };
+        if next_ts < obs.timestamp {
+            // end_ts strictly before the last observation, or malformed
+            // order — genuinely invalid. `next_ts == obs.timestamp` is
+            // legitimate (a zero-length tail when end_ts lands exactly on
+            // the last observation) and contributes zero weight below.
+            return None;
+        }
+        let dt = (next_ts - obs.timestamp) as i128;
+        weighted_sum = obs.price.checked_mul(dt)?.checked_add(weighted_sum)?;
+        total_time = total_time.checked_add(dt)?;
+    }
+
+    if total_time == 0 {
+        return None;
+    }
+
+    weighted_sum.checked_div(total_time)
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -1007,6 +1065,7 @@ impl OutcomeManager {
     pub fn submit_price_observation(
         env: Env,
         call_id: u64,
+        call_end_ts: u64,
         observation: PriceObservation,
         oracle_pubkey: BytesN<32>,
         signature: BytesN<64>,
@@ -1024,6 +1083,12 @@ impl OutcomeManager {
             &observation.timestamp.to_be_bytes(),
         ));
         verify_signature(&env, &oracle_pubkey, &signature, &raw);
+
+        let (window_secs, _) = get_twap_config(&env);
+        let window_start = call_end_ts.saturating_sub(window_secs);
+        if observation.timestamp < window_start || observation.timestamp > call_end_ts {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::ObservationOutsideWindow);
+        }
 
         let key = TempKey::PriceObservations(call_id);
         let mut observations: Vec<PriceObservation> = env
@@ -1046,41 +1111,60 @@ impl OutcomeManager {
         emit_price_observation_submitted(&env, call_id, &oracle_pubkey, price, timestamp);
     }
 
-    pub fn compute_twap(env: Env, call_id: u64) -> i128 {
+    /// Computes the TWAP for `call_id` over its stored observations,
+    /// extended to `end_ts`. Panics (via typed `OutcomeError`) if there
+    /// aren't enough observations to trust the result — see
+    /// [`Self::resolve_price`] for a non-panicking fallback-aware variant.
+    pub fn compute_twap(env: Env, call_id: u64, end_ts: u64) -> i128 {
         let key = TempKey::PriceObservations(call_id);
         let observations: Vec<PriceObservation> = match env.storage().temporary().get(&key) {
             Some(observations) => observations,
             None => soroban_sdk::panic_with_error!(&env, OutcomeError::NoPriceObservations),
         };
 
-        let n = observations.len();
-        if n < 3 {
-            soroban_sdk::panic_with_error!(&env, OutcomeError::InsufficientPriceObservations);
+        let (window_secs, min_observations) = get_twap_config(&env);
+        match try_compute_twap(&observations, end_ts, window_secs, min_observations) {
+            Some(twap) => twap,
+            None => soroban_sdk::panic_with_error!(&env, OutcomeError::InsufficientPriceObservations),
         }
+    }
 
-        let mut weighted_sum: i128 = 0;
-        let mut total_time: i128 = 0;
+    /// Set the TWAP window length (seconds before a call's `end_ts`) and
+    /// the minimum observation count required for a TWAP to be trusted
+    /// (admin only).
+    pub fn set_twap_config(env: Env, window_secs: u64, min_observations: u32) {
+        require_admin(&env);
+        set_twap_config(&env, window_secs, min_observations);
+        emit_admin_params_changed(&env, window_secs);
+    }
 
-        for i in 0..(n - 1) {
-            let obs_i = observations.get(i).unwrap();
-            let obs_next = observations.get(i + 1).unwrap();
-            let dt = (obs_next.timestamp - obs_i.timestamp) as i128;
-            weighted_sum = obs_i
-                .price
-                .checked_mul(dt)
-                .unwrap_or_else(|| overflow(&env))
-                .checked_add(weighted_sum)
-                .unwrap_or_else(|| overflow(&env));
-            total_time = total_time.checked_add(dt).unwrap_or_else(|| overflow(&env));
+    /// Return the current `(window_secs, min_observations)` TWAP config.
+    pub fn get_twap_config(env: Env) -> (u64, u32) {
+        get_twap_config(&env)
+    }
+
+    /// Returns the resolution price for `call_id`: the TWAP over its final
+    /// observations if there are enough to trust, otherwise
+    /// `single_point_price` unchanged (e.g. an oracle's direct submission).
+    /// Never panics — a market with no or insufficient observations
+    /// (oracle downtime, a brand-new market) resolves exactly as it did
+    /// before TWAP existed.
+    pub fn resolve_price(env: Env, call_id: u64, end_ts: u64, single_point_price: i128) -> i128 {
+        let key = TempKey::PriceObservations(call_id);
+        let observations: Vec<PriceObservation> = env
+            .storage()
+            .temporary()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let (window_secs, min_observations) = get_twap_config(&env);
+        match try_compute_twap(&observations, end_ts, window_secs, min_observations) {
+            Some(twap_price) => {
+                emit_twap_computed(&env, call_id, twap_price, observations.len());
+                twap_price
+            }
+            None => single_point_price,
         }
-
-        if total_time == 0 {
-            soroban_sdk::panic_with_error!(&env, OutcomeError::ZeroTimeWindow);
-        }
-
-        weighted_sum
-            .checked_div(total_time)
-            .unwrap_or_else(|| overflow(&env))
     }
 
     pub fn schedule_oracle_removal(env: Env, oracle_pubkey: BytesN<32>, effective_ledger: u32) {

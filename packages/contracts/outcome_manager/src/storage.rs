@@ -62,6 +62,12 @@ pub enum InstanceKey {
     ClaimableBalanceId(u64, Address),
     /// SDEX deviation threshold in basis points (default 500 = 5%)
     SdexThresholdBps,
+    /// TWAP window length in seconds, counting back from a call's `end_ts`.
+    /// Default 600 (10 minutes).
+    TwapWindowSecs,
+    /// Minimum price observations required for a TWAP to be considered
+    /// valid. Default 3.
+    TwapMinObservations,
 }
 
 #[contracttype]
@@ -144,4 +150,30 @@ pub fn get_max_submission_delay(env: &Env) -> u64 {
         .instance()
         .get(&InstanceKey::MaxSubmissionDelay)
         .unwrap_or(86400)
+}
+
+pub const DEFAULT_TWAP_WINDOW_SECS: u64 = 600;
+pub const DEFAULT_TWAP_MIN_OBSERVATIONS: u32 = 3;
+
+pub fn set_twap_config(env: &Env, window_secs: u64, min_observations: u32) {
+    env.storage()
+        .instance()
+        .set(&InstanceKey::TwapWindowSecs, &window_secs);
+    env.storage()
+        .instance()
+        .set(&InstanceKey::TwapMinObservations, &min_observations);
+}
+
+pub fn get_twap_config(env: &Env) -> (u64, u32) {
+    let window_secs = env
+        .storage()
+        .instance()
+        .get(&InstanceKey::TwapWindowSecs)
+        .unwrap_or(DEFAULT_TWAP_WINDOW_SECS);
+    let min_observations = env
+        .storage()
+        .instance()
+        .get(&InstanceKey::TwapMinObservations)
+        .unwrap_or(DEFAULT_TWAP_MIN_OBSERVATIONS);
+    (window_secs, min_observations)
 }

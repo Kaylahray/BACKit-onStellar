@@ -113,6 +113,14 @@ pub fn emit_price_observation_submitted(
     );
 }
 
+/// Emitted when a TWAP is successfully computed and used for resolution.
+pub fn emit_twap_computed(env: &Env, call_id: u64, twap_price: i128, observation_count: u32) {
+    env.events().publish(
+        (symbol_short!("twap"), symbol_short!("computed")),
+        (call_id, twap_price, observation_count),
+    );
+}
+
 /// Emitted when a claimable balance is created for a winning staker
 pub fn emit_claimable_balance_created(
     env: &Env,
