@@ -65,4 +65,28 @@ pub struct MarketConfig {
     pub max_stake_per_user: i128,
     pub staking_cutoff_secs: u64,
     pub paused: bool,
+    pub early_staker_bonus_window_secs: u64,
+    pub early_staker_bonus_bps: u32,
+}
+
+/// Verification result for proof-of-reserve checks.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReserveVerification {
+    pub balance_on_chain: i128,
+    pub total_staked: i128,
+    pub total_escrowed: i128,
+    pub is_fully_reserved: bool,
+    pub discrepancy: i128,
+}
+
+/// Record of an individual stake for early-bonus tracking.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct StakeRecord {
+    pub staker: Address,
+    pub amount: i128,
+    pub position: u32,
+    pub stake_timestamp: u64,
+    pub has_withdrawn: bool,
 }
