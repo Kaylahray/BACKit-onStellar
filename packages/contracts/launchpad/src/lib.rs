@@ -53,12 +53,12 @@ impl LaunchpadContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk::{Env, testutils::Address as _};
 
     #[test]
     fn test_launchpad_estimate() {
         let env = Env::default();
-        let contract_id = env.register_contract(None, LaunchpadContract);
+        let contract_id = env.register(LaunchpadContract, ());
         let client = LaunchpadContractClient::new(&env, &contract_id);
 
         let user = Address::generate(&env);
