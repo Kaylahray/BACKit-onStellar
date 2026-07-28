@@ -10,6 +10,7 @@ members = [
   "parlay_betting",
   "gas_station",
   "oracle_marketplace",
+  "lending_pool",
   "contracts/hello-world",
 ]
 

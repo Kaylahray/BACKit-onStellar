@@ -889,6 +889,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lending-pool"
+version = "0.0.0"
+dependencies = [
+ "backit-shared",
+ "ed25519-dalek",
+ "outcome-manager",
+ "prediction-market",
+ "prediction-market-factory",
+ "rand",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
