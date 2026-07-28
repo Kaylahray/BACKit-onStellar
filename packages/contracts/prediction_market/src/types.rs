@@ -67,6 +67,29 @@ pub struct MarketConfig {
     pub paused: bool,
     pub early_staker_bonus_window_secs: u64,
     pub early_staker_bonus_bps: u32,
+    /// #465: bps (of the escrowed amount) paid to whoever calls
+    /// `refund_expired_order` on an expired limit order, as a small
+    /// incentive for permissionless cleanup. Not currently exposed via the
+    /// constructor (there is no post-deploy config-mutation path anywhere
+    /// else in this contract either), so it is set from
+    /// `DEFAULT_EXPIRED_ORDER_REFUND_BPS` at construction time.
+    pub expired_order_refund_bps: u32,
+}
+
+/// #465: A non-custodial limit order for staking on a prediction market
+/// position. See `PredictionMarket::create_limit_order` for the exact
+/// implied-probability fill semantics.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LimitOrder {
+    pub id: u64,
+    pub user: Address,
+    pub call_id: u64,
+    pub outcome: u32,
+    pub amount: i128,
+    pub target_probability_bps: u32,
+    pub created_at: u64,
+    pub expires_at: u64,
 }
 
 /// Verification result for proof-of-reserve checks.
