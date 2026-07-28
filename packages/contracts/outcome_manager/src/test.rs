@@ -1043,10 +1043,16 @@ fn test_twap_three_equal_intervals() {
     let env = Env::default();
     let (_admin, _registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
     let call_id = 42u64;
+    let call_end_ts = 3000u64;
+    // Widen the window so observations from ts=1000 (2000s before end_ts)
+    // are accepted — this test is about the TWAP formula, not the window
+    // boundary (see test_submit_price_observation_rejects_outside_window).
+    client.set_twap_config(&2000u64, &3u32);
     for (price, ts) in [(100_i128, 1000u64), (200, 2000), (300, 3000)] {
         let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
         client.submit_price_observation(
             &call_id,
+            &call_end_ts,
             &PriceObservation {
                 price,
                 timestamp: ts,
@@ -1055,7 +1061,61 @@ fn test_twap_three_equal_intervals() {
             &sig,
         );
     }
-    assert_eq!(client.compute_twap(&call_id), 150);
+    // end_ts == the last observation's own timestamp, so its tail segment
+    // contributes zero weight — same result as averaging only the gaps
+    // between consecutive observations: (100*1000 + 200*1000) / 2000 = 150.
+    assert_eq!(client.compute_twap(&call_id, &call_end_ts), 150);
+}
+
+#[test]
+fn test_twap_extends_last_price_to_end_ts() {
+    let env = Env::default();
+    let (_admin, _registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 43u64;
+    // Observations only span ts=1000..1400 within the 600s window
+    // [1000, 1600]; the last observation (300) never gets a "next"
+    // observation, so the TWAP must extend it forward to end_ts=1600 —
+    // without that extension this would (incorrectly) average to 150
+    // instead of 200.
+    for (price, ts) in [(100_i128, 1000u64), (200, 1200), (300, 1400)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &1600u64,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // (100*200 + 200*200 + 300*200) / 600 = (20000+40000+60000)/600 = 200.
+    assert_eq!(client.compute_twap(&call_id, &1600u64), 200);
+}
+
+#[test]
+fn test_twap_irregular_spacing() {
+    let env = Env::default();
+    let (_admin, _registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 45u64;
+    let call_end_ts = 1000u64;
+    // Uneven gaps: 100s, then 300s, then a 100s tail to end_ts.
+    for (price, ts) in [(200_i128, 500u64), (400, 600), (100, 900)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // (200*100 + 400*300 + 100*100) / 500 = (20000+120000+10000)/500 = 300.
+    assert_eq!(client.compute_twap(&call_id, &call_end_ts), 300);
 }
 
 #[test]
@@ -1063,10 +1123,13 @@ fn test_twap_requires_minimum_3_observations() {
     let env = Env::default();
     let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
     let call_id = 44u64;
-    for (price, ts) in [(100_i128, 1000u64), (200, 2000)] {
+    // Within the default 600s window before end_ts=2000 (window starts at
+    // 1400) so submission itself succeeds — only the *count* is short.
+    for (price, ts) in [(100_i128, 1400u64), (200, 1500)] {
         let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
         client.submit_price_observation(
             &call_id,
+            &2000u64,
             &PriceObservation {
                 price,
                 timestamp: ts,
@@ -1075,7 +1138,173 @@ fn test_twap_requires_minimum_3_observations() {
             &sig,
         );
     }
-    let result = client.try_compute_twap(&call_id);
+    let result = client.try_compute_twap(&call_id, &2000u64);
+    assert_contract_error(result, OutcomeError::InsufficientPriceObservations);
+}
+
+#[test]
+fn test_twap_requires_half_window_span() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 46u64;
+    let call_end_ts = 10_000u64;
+    // Default window is 600s (min span 300s), but these 3 observations are
+    // clustered within 20s — plenty of *count*, not enough *span*.
+    for (price, ts) in [(100_i128, 9980u64), (200, 9990), (300, 10_000)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    let result = client.try_compute_twap(&call_id, &call_end_ts);
+    assert_contract_error(result, OutcomeError::InsufficientPriceObservations);
+}
+
+#[test]
+fn test_resolve_price_falls_back_to_single_point_when_insufficient() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 47u64;
+    let call_end_ts = 2000u64;
+    // Only 2 observations — not enough for a trusted TWAP. Within the
+    // default 600s window (starts at 1400) so submission itself succeeds.
+    for (price, ts) in [(100_i128, 1450u64), (200, 1500)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    let single_point_price = 999_i128;
+    assert_eq!(
+        client.resolve_price(&call_id, &call_end_ts, &single_point_price),
+        single_point_price
+    );
+}
+
+#[test]
+fn test_resolve_price_uses_twap_when_available() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 48u64;
+    let call_end_ts = 3000u64;
+    client.set_twap_config(&2000u64, &3u32);
+    for (price, ts) in [(100_i128, 1000u64), (200, 2000), (300, 3000)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // Falls back price is never used here — the TWAP (150) wins.
+    assert_eq!(client.resolve_price(&call_id, &call_end_ts, &999), 150);
+}
+
+#[test]
+fn test_submit_price_observation_rejects_outside_window() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 49u64;
+    // Default window is 600s; an observation 1000s before end_ts is outside it.
+    let call_end_ts = 10_000u64;
+    let ts = 9_000u64;
+    let sig = sign_observation(&env, &oracle_secret, call_id, 100, ts);
+    let result = client.try_submit_price_observation(
+        &call_id,
+        &call_end_ts,
+        &PriceObservation {
+            price: 100,
+            timestamp: ts,
+        },
+        &oracle_pubkey,
+        &sig,
+    );
+    assert_contract_error(result, OutcomeError::ObservationOutsideWindow);
+}
+
+#[test]
+fn test_set_twap_config_changes_window_and_min_observations() {
+    let env = Env::default();
+    let (admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    client.set_twap_config(&200u64, &2u32);
+    assert_eq!(client.get_twap_config(), (200u64, 2u32));
+
+    // With min_observations lowered to 2, 2 well-spaced observations now
+    // produce a valid TWAP instead of falling back. Window is [1100, 1300];
+    // span (100) meets the new half-window requirement (100) exactly.
+    let call_id = 50u64;
+    let call_end_ts = 1300u64;
+    for (price, ts) in [(100_i128, 1100u64), (300, 1200)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // (100*100 + 300*100) / 200 = 200.
+    assert_eq!(client.compute_twap(&call_id, &call_end_ts), 200);
+    let _ = admin;
+}
+
+#[test]
+fn test_twap_overflow_prevention_large_window() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 51u64;
+    // A large price and a very large time window shouldn't panic on
+    // overflow — try_compute_twap must reject gracefully via checked ops
+    // rather than trapping, and compute_twap surfaces that as a typed error
+    // rather than an unhandled overflow trap.
+    // i128::MAX/2 multiplied by even a ~1000-second gap vastly exceeds
+    // i128::MAX, so this overflows regardless of how wide the window is —
+    // widen it only enough that submission succeeds and the span check
+    // passes, so the overflow surfaces from compute_twap's own arithmetic
+    // (the actual thing under test), not from an unrelated rejection.
+    let huge_price = i128::MAX / 2;
+    let call_end_ts = 3000u64;
+    client.set_twap_config(&2000u64, &3u32);
+    for (price, ts) in [(huge_price, 1_000u64), (huge_price, 2_000), (huge_price, 3_000)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    let result = client.try_compute_twap(&call_id, &call_end_ts);
+    // These inputs genuinely overflow i128 — `try_compute_twap`'s checked_*
+    // arithmetic must catch that and surface it as a graceful typed error
+    // (not an unhandled arithmetic panic/trap).
     assert_contract_error(result, OutcomeError::InsufficientPriceObservations);
 }
 
