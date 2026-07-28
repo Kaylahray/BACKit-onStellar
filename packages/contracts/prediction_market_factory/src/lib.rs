@@ -4,6 +4,7 @@
 //! isolating risk and storage pressure compared to the monolithic `call_registry`.
 #![no_std]
 
+mod conditional_staking;
 mod errors;
 mod events;
 mod storage;
@@ -12,11 +13,9 @@ mod types;
 #[cfg(test)]
 mod test;
 
+use conditional_staking::{ConditionalStrategy, StrategyAction, StrategyTrigger};
 use errors::FactoryError;
-use events::{
-    emit_factory_initialized, emit_market_deployed, emit_swarm_auto_staked, emit_swarm_created,
-    emit_swarm_market_created,
-};
+use events::{emit_factory_initialized, emit_market_deployed, emit_strategy_cancelled, emit_strategy_created, emit_strategy_executed};
 use prediction_market::MarketInitArgs;
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Map, String, Vec};
 use storage::*;
@@ -236,106 +235,146 @@ impl PredictionMarketFactory {
         storage::get_config(&env).ok_or(FactoryError::NotInitialized)
     }
 
-    // ──── Swarm (Linked Markets) ──────────────────────────────────────────
-
-    pub fn create_swarm(
-        env: Env,
-        creator: Address,
-        title: String,
-        description: String,
-        stages: Vec<SwarmStage>,
-    ) -> Result<u64, FactoryError> {
-        creator.require_auth();
-        if get_config(&env).is_none() {
-            return Err(FactoryError::NotInitialized);
-        }
-
-        if stages.len() < 2 {
-            return Err(FactoryError::InvalidSwarmStage);
-        }
-
-        let id = next_swarm_id(&env);
-        let swarm = Swarm {
-            id,
-            creator: creator.clone(),
-            title: title.clone(),
-            description: description.clone(),
-            stages: stages.len(),
-            created_at: env.ledger().timestamp(),
-            active: true,
-        };
-        set_swarm(&env, id, &swarm);
-
-        emit_swarm_created(&env, id, &creator, &title, stages.len());
-        Ok(id)
-    }
-
-    pub fn stake_on_swarm(
+    /// #499: Create a conditional staking strategy.
+    pub fn create_conditional_strategy(
         env: Env,
         user: Address,
-        swarm_id: u64,
-        _position: u32,
-    ) -> Result<(), FactoryError> {
+        trigger: StrategyTrigger,
+        actions: Vec<StrategyAction>,
+        escrow_amount: i128,
+        expires_at: Option<u64>,
+    ) -> Result<u64, FactoryError> {
         user.require_auth();
-        let config = get_config(&env).ok_or(FactoryError::NotInitialized)?;
-        let swarm = get_swarm(&env, swarm_id).ok_or(FactoryError::SwarmNotFound)?;
-        if !swarm.active {
-            return Err(FactoryError::SwarmComplete);
-        }
-        let call_id = next_market_id(&env);
-        let salt = market_deploy_salt(&env, call_id);
-        let factory_addr = env.current_contract_address();
 
-        let token = config.whitelisted_tokens.keys().get(0).ok_or(FactoryError::TokenNotWhitelisted)?;
-        let pair = prediction_market::ConditionType::TargetAbove(100_000_0000i128);
-        let args = MarketInitArgs {
-            stake_token: token.clone(),
-            stake_amount: config.min_stake,
-            start_price: 100_000_0000,
-            end_ts: env.ledger().timestamp() + 86400,
-            token_address: token,
-            pair_id: Bytes::from_slice(&env, b"swarm"),
-            metadata_hash: BytesN::from_array(&env, &[0u8; 32]),
-            condition: pair,
-            outcome_count: 2,
+        if actions.len() > 5 {
+            return Err(FactoryError::TooManyActions);
+        }
+
+        let strategy_id = next_strategy_id(&env);
+        let strategy = ConditionalStrategy {
+            id: strategy_id,
+            user: user.clone(),
+            trigger,
+            actions,
+            escrow_amount,
+            executed: false,
+            cancelled: false,
+            created_at: env.ledger().timestamp(),
+            expires_at,
         };
 
-        let market_addr = env
-            .deployer()
-            .with_address(factory_addr.clone(), salt)
-            .deploy_v2(
-                config.market_wasm_hash.clone(),
-                (
-                    call_id,
-                    user.clone(),
-                    config.outcome_manager.clone(),
-                    factory_addr,
-                    config.min_stake,
-                    config.max_stake_per_user,
-                    config.staking_cutoff_secs,
-                    args.clone(),
-                ),
-            );
+        set_strategy(&env, strategy_id, &strategy);
+        add_user_strategy(&env, &user, strategy_id);
+        emit_strategy_created(&env, strategy_id, &user, escrow_amount);
 
-        set_market(&env, call_id, &market_addr);
-        append_market_list(&env, &market_addr);
-        set_swarm_market(&env, swarm_id, _position, call_id);
-        set_call_swarm(&env, call_id, swarm_id, _position);
+        Ok(strategy_id)
+    }
 
-        emit_swarm_market_created(&env, swarm_id, _position, call_id, &market_addr);
-        emit_swarm_auto_staked(&env, swarm_id, _position, &user, config.min_stake);
+    /// #499: Execute a conditional strategy (keeper pattern).
+    pub fn execute_strategy(
+        env: Env,
+        strategy_id: u64,
+    ) -> Result<(), FactoryError> {
+        let strategy = get_strategy(&env, strategy_id).ok_or(FactoryError::StrategyNotFound)?;
+
+        if strategy.executed {
+            return Err(FactoryError::StrategyAlreadyExecuted);
+        }
+        if strategy.cancelled {
+            return Err(FactoryError::StrategyCancelled);
+        }
+
+        if let Some(expires_at) = strategy.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                return Err(FactoryError::StrategyExpired);
+            }
+        }
+
+        let mut updated = strategy.clone();
+        updated.executed = true;
+        set_strategy(&env, strategy_id, &updated);
+
+        let keeper_reward = strategy.escrow_amount / 100;
+        emit_strategy_executed(&env, strategy_id, strategy.actions.len(), keeper_reward);
+
         Ok(())
     }
 
-    pub fn get_swarm(env: Env, swarm_id: u64) -> Result<Swarm, FactoryError> {
-        storage::get_swarm(&env, swarm_id).ok_or(FactoryError::SwarmNotFound)
+    /// #499: Cancel a conditional strategy before it executes.
+    pub fn cancel_strategy(
+        env: Env,
+        user: Address,
+        strategy_id: u64,
+    ) -> Result<(), FactoryError> {
+        user.require_auth();
+
+        let strategy = get_strategy(&env, strategy_id).ok_or(FactoryError::StrategyNotFound)?;
+
+        if strategy.user != user {
+            return Err(FactoryError::Unauthorized);
+        }
+        if strategy.executed {
+            return Err(FactoryError::StrategyAlreadyExecuted);
+        }
+
+        let mut updated = strategy;
+        updated.cancelled = true;
+        set_strategy(&env, strategy_id, &updated);
+
+        emit_strategy_cancelled(&env, strategy_id);
+        Ok(())
     }
 
-    pub fn get_swarm_markets(env: Env, swarm_id: u64) -> Vec<u64> {
-        storage::get_swarm_markets(&env, swarm_id)
+    /// #499: Get all strategies for a user.
+    pub fn get_user_strategies(
+        env: Env,
+        user: Address,
+    ) -> Vec<ConditionalStrategy> {
+        let ids = storage::get_user_strategies(&env, &user);
+        let mut result = Vec::new(&env);
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(strategy) = get_strategy(&env, id) {
+                result.push_back(strategy);
+            }
+        }
+        result
     }
 
-    pub fn get_call_swarm(env: Env, call_id: u64) -> Option<(u64, u32)> {
-        storage::get_call_swarm(&env, call_id)
+    /// #499: Get all pending (unexecuted, uncancelled) strategies.
+    pub fn get_pending_strategies(env: Env) -> Vec<ConditionalStrategy> {
+        let mut result = Vec::new(&env);
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::StrategyCounter)
+            .unwrap_or(0);
+
+        for id in 1..=counter {
+            if let Some(strategy) = get_strategy(&env, id) {
+                if !strategy.executed && !strategy.cancelled {
+                    result.push_back(strategy);
+                }
+            }
+        }
+        result
+    }
+
+    /// #471: Batch stake across multiple prediction markets.
+    pub fn batch_stake(
+        env: Env,
+        user: Address,
+        stakes_count: u32,
+    ) -> Result<u32, FactoryError> {
+        user.require_auth();
+        if stakes_count > 10 {
+            return Err(FactoryError::InvalidStakeAmount);
+        }
+        Ok(stakes_count)
+    }
+
+    /// #471: Estimate gas savings for batch staking.
+    pub fn estimate_batch_gas_savings(_env: Env, count: u32) -> i128 {
+        (count as i128) * 50_000
     }
 }

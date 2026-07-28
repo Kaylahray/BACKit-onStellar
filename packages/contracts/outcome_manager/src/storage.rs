@@ -68,6 +68,15 @@ pub enum InstanceKey {
     /// Minimum price observations required for a TWAP to be considered
     /// valid. Default 3.
     TwapMinObservations,
+    /// Ledger timestamp (seconds) at which `call_id` was settled — i.e. the
+    /// moment `FinalOutcome(call_id)` was written, via either the immediate
+    /// quorum path (`Self::finalize`) or the dispute-window path
+    /// (`finalize_outcome`). Used to measure the social-recovery grace period.
+    SettledAt(u64),
+    /// Grace period (seconds) that must elapse after a call is settled
+    /// before a designated recovery address may claim an unclaimed payout
+    /// on the original winner's behalf. Default 30 days (2_592_000s).
+    RecoveryGracePeriodSecs,
 }
 
 #[contracttype]
@@ -78,6 +87,12 @@ pub enum PersistentKey {
     PendingOracleRemoval(BytesN<32>),
     /// Pending oracle addition: reserved for scheduled oracle onboarding.
     PendingOracleAdditions(BytesN<32>),
+    /// Social recovery: maps a user's address to the trusted recovery
+    /// address they've designated via `set_recovery_address`. Per-user, so
+    /// this lives in persistent (not instance) storage — see
+    /// `PersistentKey::Votes` for the established pattern of keying
+    /// per-entity persistent data off this enum.
+    RecoveryAddress(Address),
 }
 
 /// A single price data point submitted by an oracle for TWAP calculation
@@ -176,4 +191,59 @@ pub fn get_twap_config(env: &Env) -> (u64, u32) {
         .get(&InstanceKey::TwapMinObservations)
         .unwrap_or(DEFAULT_TWAP_MIN_OBSERVATIONS);
     (window_secs, min_observations)
+}
+
+// ─── Social recovery ────────────────────────────────────────────────────────
+
+/// 30 days, in seconds — the default grace period before a designated
+/// recovery address may claim an unclaimed payout on the original winner's
+/// behalf.
+pub const DEFAULT_RECOVERY_GRACE_PERIOD_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Record the ledger timestamp at which `call_id` was settled. Called at the
+/// exact moment `FinalOutcome(call_id)` is written (both the immediate-quorum
+/// path and the dispute-window path).
+pub fn set_settled_at(env: &Env, call_id: u64, ts: u64) {
+    env.storage()
+        .instance()
+        .set(&InstanceKey::SettledAt(call_id), &ts);
+}
+
+/// Read the settlement timestamp for `call_id`, if recorded.
+pub fn get_settled_at_opt(env: &Env, call_id: u64) -> Option<u64> {
+    env.storage().instance().get(&InstanceKey::SettledAt(call_id))
+}
+
+pub fn set_recovery_grace_period(env: &Env, secs: u64) {
+    env.storage()
+        .instance()
+        .set(&InstanceKey::RecoveryGracePeriodSecs, &secs);
+}
+
+pub fn get_recovery_grace_period(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&InstanceKey::RecoveryGracePeriodSecs)
+        .unwrap_or(DEFAULT_RECOVERY_GRACE_PERIOD_SECS)
+}
+
+/// Set (or overwrite) `user`'s designated recovery address.
+pub fn set_recovery_address(env: &Env, user: Address, recovery_address: Address) {
+    env.storage()
+        .persistent()
+        .set(&PersistentKey::RecoveryAddress(user), &recovery_address);
+}
+
+/// Read `user`'s designated recovery address, if any.
+pub fn get_recovery_address_opt(env: &Env, user: Address) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&PersistentKey::RecoveryAddress(user))
+}
+
+/// Remove `user`'s designated recovery address, if one is set.
+pub fn remove_recovery_address(env: &Env, user: Address) {
+    env.storage()
+        .persistent()
+        .remove(&PersistentKey::RecoveryAddress(user));
 }

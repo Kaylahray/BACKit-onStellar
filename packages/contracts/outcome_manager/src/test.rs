@@ -1521,3 +1521,241 @@ fn test_rotation_keys_do_not_collide_with_admin_or_quorum() {
     assert!(client.is_oracle(&extra_pubkey), "admin key corrupted by rotation");
 }
 
+// ─── Social Recovery Tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_set_and_get_recovery_address() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_fee(&env, 0);
+    let user = Address::generate(&env);
+    let recovery = Address::generate(&env);
+
+    assert!(client.get_recovery_address(&user).is_none());
+
+    client.set_recovery_address(&user, &recovery);
+    assert_eq!(client.get_recovery_address(&user), Some(recovery));
+}
+
+#[test]
+fn test_remove_recovery_address() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_fee(&env, 0);
+    let user = Address::generate(&env);
+    let recovery = Address::generate(&env);
+
+    client.set_recovery_address(&user, &recovery);
+    assert!(client.get_recovery_address(&user).is_some());
+
+    client.remove_recovery_address(&user);
+    assert!(client.get_recovery_address(&user).is_none());
+}
+
+#[test]
+fn test_default_recovery_grace_period_is_30_days() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_fee(&env, 0);
+    assert_eq!(client.get_recovery_grace_period(), 30 * 24 * 60 * 60);
+}
+
+/// The original winner is never blocked by a recovery address: they can
+/// claim at any time, including before the grace period would even allow
+/// the recovery agent to act. Once claimed, the recovery agent can no
+/// longer claim on their behalf (same `Claimed` flag).
+#[test]
+fn test_original_winner_claims_before_recovery_agent() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    // Winner claims immediately -- no need to wait for the grace period.
+    client.claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
+    assert!(client.has_claimed(&1u64, &staker));
+
+    // Recovery agent can no longer claim -- already claimed by the winner.
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::AlreadyClaimed);
+}
+
+#[test]
+fn test_claim_on_behalf_fails_one_second_before_grace_period() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period - 1;
+    });
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::RecoveryGracePeriodNotElapsed);
+}
+
+#[test]
+fn test_claim_on_behalf_succeeds_exactly_at_grace_period() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    client.claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+
+    assert!(client.has_claimed(&1u64, &staker));
+
+    // Original winner can no longer claim afterward -- same `Claimed` flag.
+    let result =
+        client.try_claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
+    assert_contract_error(result, OutcomeError::AlreadyClaimed);
+}
+
+#[test]
+fn test_claim_on_behalf_fails_for_non_recovery_agent() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &impostor,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::NotRecoveryAgent);
+}
+
+#[test]
+fn test_claim_on_behalf_fails_when_no_recovery_address_set() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let someone = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &someone,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::NotRecoveryAgent);
+}
+
+#[test]
+fn test_set_recovery_grace_period_changes_default() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_grace_period(&100u64);
+    assert_eq!(client.get_recovery_grace_period(), 100u64);
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    // Would fail against the (unused) 30-day default, but the custom
+    // 100s period has elapsed.
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + 100;
+    });
+
+    client.claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert!(client.has_claimed(&1u64, &staker));
+}
+
+#[test]
+fn test_claim_on_behalf_fails_when_paused() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    client.pause();
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::ContractPaused);
+}
+

@@ -665,6 +665,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gas-station"
+version = "0.0.0"
+dependencies = [
+ "backit-shared",
+ "ed25519-dalek",
+ "outcome-manager",
+ "prediction-market",
+ "prediction-market-factory",
+ "rand",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -890,6 +903,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lending-pool"
+version = "0.0.0"
+dependencies = [
+ "backit-shared",
+ "ed25519-dalek",
+ "outcome-manager",
+ "prediction-market",
+ "prediction-market-factory",
+ "rand",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -974,6 +1000,16 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "oracle-marketplace"
+version = "0.0.0"
+dependencies = [
+ "backit-shared",
+ "ed25519-dalek",
+ "rand",
+ "soroban-sdk",
+]
 
 [[package]]
 name = "outcome-manager"
@@ -1180,6 +1216,13 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "schelling-oracle"
+version = "0.0.0"
+dependencies = [
+ "soroban-sdk",
+]
 
 [[package]]
 name = "schemars"

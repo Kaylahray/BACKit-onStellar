@@ -82,6 +82,10 @@ This project enforces code quality via **Husky + lint-staged**. On every commit:
 
 _Examples:_ `feat(frontend): add countdown timer to CallCard`, `fix(backend): resolve WebSocket connection leak`
 
+## 📚 Documentation
+
+- [MIGRATIONS.md](./MIGRATIONS.md) — how to generate, run, revert, and check the status of backend database migrations, plus the `synchronize` vs. migrations rules for this project.
+
       Note for Soroban development
       Inside packages/contracts you can use:
 
