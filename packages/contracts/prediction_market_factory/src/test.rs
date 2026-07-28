@@ -16,27 +16,17 @@ fn install_market_wasm(env: &Env) -> BytesN<32> {
     let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let release_v1 = workspace_root.join("target/wasm32v1-none/release");
     let release_unknown = workspace_root.join("target/wasm32-unknown-unknown/release");
-    // Prefer stellar `contract build` / `contract optimize` artifacts. Raw release
-    // wasm32-unknown-unknown binaries may include reference-types on newer rustc.
     let candidates = [
         release_v1.join("prediction_market.optimized.wasm"),
         release_v1.join("prediction_market.wasm"),
         release_unknown.join("prediction_market.optimized.wasm"),
+        release_unknown.join("prediction_market.wasm"),
     ];
 
     let wasm_path = candidates
         .iter()
         .find(|path| path.exists())
-        .unwrap_or_else(|| {
-            panic!(
-                "missing Soroban-compatible prediction_market WASM — run:\n  \
-                 cd packages/contracts/prediction_market && stellar contract build\n  \
-                 # or:\n  \
-                 cargo build --release --target wasm32-unknown-unknown -p prediction-market\n  \
-                 stellar contract optimize --wasm {}/prediction_market.wasm",
-                release_unknown.display()
-            )
-        });
+        .expect("missing prediction_market WASM");
 
     let wasm_bytes = std::fs::read(wasm_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", wasm_path.display()));
