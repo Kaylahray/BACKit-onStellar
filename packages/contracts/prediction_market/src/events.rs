@@ -91,3 +91,84 @@ pub fn emit_early_staker_bonus(
         (call_id, staker.clone(), bonus),
     );
 }
+
+/// #465: A limit order was created and its tokens escrowed.
+pub fn emit_limit_order_created(
+    env: &Env,
+    order_id: u64,
+    call_id: u64,
+    user: &Address,
+    outcome: u32,
+    amount: i128,
+    target_probability_bps: u32,
+    expires_at: u64,
+) {
+    env.events().publish(
+        ("prediction_market", "limit_order_created"),
+        (
+            order_id,
+            call_id,
+            user.clone(),
+            outcome,
+            amount,
+            target_probability_bps,
+            expires_at,
+        ),
+    );
+}
+
+/// #465: `LimitOrderFilled(order_id, call_id, user, outcome, amount, filled_price)`
+/// per the issue's specified event shape. `filled_price` is the implied
+/// probability (bps) of the position at the moment the order filled.
+pub fn emit_limit_order_filled(
+    env: &Env,
+    order_id: u64,
+    call_id: u64,
+    user: &Address,
+    outcome: u32,
+    amount: i128,
+    filled_price: u32,
+) {
+    env.events().publish(
+        ("prediction_market", "limit_order_filled"),
+        (order_id, call_id, user.clone(), outcome, amount, filled_price),
+    );
+}
+
+/// #465: A limit order was cancelled by its owner and its escrow refunded.
+pub fn emit_limit_order_cancelled(
+    env: &Env,
+    order_id: u64,
+    call_id: u64,
+    user: &Address,
+    refunded_amount: i128,
+) {
+    env.events().publish(
+        ("prediction_market", "limit_order_cancelled"),
+        (order_id, call_id, user.clone(), refunded_amount),
+    );
+}
+
+/// #465: An expired limit order was force-refunded by `caller`, who
+/// received `reward_amount` and the order's owner received `refunded_amount`.
+pub fn emit_limit_order_expired_refunded(
+    env: &Env,
+    order_id: u64,
+    call_id: u64,
+    user: &Address,
+    refunded_amount: i128,
+    reward_amount: i128,
+    caller: &Address,
+) {
+    env.events().publish(
+        ("prediction_market", "limit_order_expired_refunded"),
+        (
+            order_id,
+            call_id,
+            user.clone(),
+            refunded_amount,
+            reward_amount,
+            caller.clone(),
+        ),
+    );
+}
