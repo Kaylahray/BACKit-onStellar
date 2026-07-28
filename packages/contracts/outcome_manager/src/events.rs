@@ -135,6 +135,41 @@ pub fn emit_claimable_balance_created(
     );
 }
 
+/// Emitted when a designated recovery address claims an unclaimed payout on
+/// the original winner's behalf, after the recovery grace period elapsed.
+pub fn emit_recovery_claimed(
+    env: &Env,
+    recovery_agent: &soroban_sdk::Address,
+    original_winner: &soroban_sdk::Address,
+    call_id: u64,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("recovery"), symbol_short!("claimed")),
+        (recovery_agent.clone(), original_winner.clone(), call_id, amount),
+    );
+}
+
+/// Emitted when a user sets (or replaces) their designated recovery address.
+pub fn emit_recovery_address_set(
+    env: &Env,
+    user: &soroban_sdk::Address,
+    recovery_address: &soroban_sdk::Address,
+) {
+    env.events().publish(
+        (symbol_short!("recovery"), symbol_short!("set")),
+        (user.clone(), recovery_address.clone()),
+    );
+}
+
+/// Emitted when a user removes their designated recovery address.
+pub fn emit_recovery_address_removed(env: &Env, user: &soroban_sdk::Address) {
+    env.events().publish(
+        (symbol_short!("recovery"), symbol_short!("removed")),
+        user.clone(),
+    );
+}
+
 use soroban_sdk::contracterror;
 
 #[contracterror]

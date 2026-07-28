@@ -25,6 +25,7 @@ use events::{
     emit_admin_params_changed, emit_batch_payout_started, emit_claimable_balance_created,
     emit_contract_upgraded, emit_fee_collected, emit_outcome_disputed, emit_outcome_finalized,
     emit_outcome_submitted, emit_payout_claimed, emit_price_observation_submitted,
+    emit_recovery_address_removed, emit_recovery_address_set, emit_recovery_claimed,
     emit_twap_computed,
 };
 use storage::{
@@ -179,6 +180,16 @@ fn require_call_settled(env: &Env, call_id: u64) {
     {
         soroban_sdk::panic_with_error!(env, OutcomeError::CallNotSettled);
     }
+}
+
+/// Read the settlement timestamp recorded for `call_id`. Both finalization
+/// paths (`Self::finalize` and `finalize_outcome`) write this at the same
+/// moment they write `FinalOutcome`, so by the time `require_call_settled`
+/// has passed this should always be present. Fall back to "now" (i.e. an
+/// elapsed time of zero) as a fail-safe if it's somehow missing, so a
+/// missing timestamp can never be mistaken for an *elapsed* grace period.
+fn get_settled_at(env: &Env, call_id: u64) -> u64 {
+    storage::get_settled_at_opt(env, call_id).unwrap_or_else(|| env.ledger().timestamp())
 }
 
 fn get_fee_config(env: &Env) -> (u32, Address) {
@@ -641,6 +652,7 @@ impl OutcomeManager {
         env.storage()
             .instance()
             .set(&InstanceKey::FinalOutcome(outcome.call_id), &outcome);
+        storage::set_settled_at(env, outcome.call_id, env.ledger().timestamp());
 
         registry_resolve_call(
             env,
@@ -725,6 +737,133 @@ impl OutcomeManager {
 
         emit_claimable_balance_created(&env, call_id, &staker, &balance_id, payout);
         emit_payout_claimed(&env, call_id, &staker, payout);
+    }
+
+    // ─── Social recovery ───────────────────────────────────────────────────
+
+    /// Designate a recovery address for `user`. If `user` doesn't claim a
+    /// payout within `recovery_grace_period` seconds of settlement, the
+    /// designated recovery address may claim it on `user`'s behalf via
+    /// `claim_on_behalf`. Must be signed by `user`. Setting a recovery
+    /// address does not remove `user`'s own right to claim at any time.
+    pub fn set_recovery_address(env: Env, user: Address, recovery_address: Address) {
+        user.require_auth();
+        storage::set_recovery_address(&env, user.clone(), recovery_address.clone());
+        emit_recovery_address_set(&env, &user, &recovery_address);
+    }
+
+    /// Remove `user`'s designated recovery address, if any. Must be signed
+    /// by `user`.
+    pub fn remove_recovery_address(env: Env, user: Address) {
+        user.require_auth();
+        storage::remove_recovery_address(&env, user.clone());
+        emit_recovery_address_removed(&env, &user);
+    }
+
+    /// Return `user`'s designated recovery address, if one has been set.
+    pub fn get_recovery_address(env: Env, user: Address) -> Option<Address> {
+        storage::get_recovery_address_opt(&env, user)
+    }
+
+    /// Set the grace period (seconds) that must elapse after a call is
+    /// settled before a designated recovery address may claim an unclaimed
+    /// payout on the original winner's behalf (admin only). Default 30 days.
+    pub fn set_recovery_grace_period(env: Env, new_period_secs: u64) {
+        require_admin(&env);
+        storage::set_recovery_grace_period(&env, new_period_secs);
+        emit_admin_params_changed(&env, new_period_secs);
+    }
+
+    /// Return the current recovery grace period, in seconds.
+    pub fn get_recovery_grace_period(env: Env) -> u64 {
+        storage::get_recovery_grace_period(&env)
+    }
+
+    /// Claim a winning staker's payout on their behalf, as their designated
+    /// recovery address, once `recovery_grace_period` has elapsed since the
+    /// call settled and the original winner hasn't claimed it themselves.
+    ///
+    /// Reuses the exact same payout computation as `claim_payout`
+    /// (`compute_payout_parts`) and the exact same `Claimed(call_id, ..)`
+    /// reentrancy-guard flag — marked against `original_winner` (not
+    /// `recovery_agent`) so the original winner can't *also* claim
+    /// afterward. The computed payout is transferred `to = recovery_agent`.
+    pub fn claim_on_behalf(
+        env: Env,
+        registry: Address,
+        call_id: u64,
+        recovery_agent: Address,
+        original_winner: Address,
+        staker_winning_stake: i128,
+        total_winning_stake: i128,
+        total_losing_stake: i128,
+    ) {
+        if is_paused(&env) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::ContractPaused);
+        }
+
+        recovery_agent.require_auth();
+
+        let stored_recovery = storage::get_recovery_address_opt(&env, original_winner.clone());
+        if stored_recovery.as_ref() != Some(&recovery_agent) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::NotRecoveryAgent);
+        }
+
+        require_call_settled(&env, call_id);
+
+        // Check the definitive "already claimed" state before the
+        // time-based grace-period gate, so a winner who already claimed
+        // always sees `AlreadyClaimed` rather than a confusing
+        // `RecoveryGracePeriodNotElapsed` if the grace period also hasn't
+        // elapsed yet.
+        let claimed_key = InstanceKey::Claimed(call_id, original_winner.clone());
+        if env.storage().instance().has(&claimed_key) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::AlreadyClaimed);
+        }
+
+        let settled_at = get_settled_at(&env, call_id);
+        let grace_period = storage::get_recovery_grace_period(&env);
+        let elapsed = env.ledger().timestamp().saturating_sub(settled_at);
+        if elapsed < grace_period {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::RecoveryGracePeriodNotElapsed);
+        }
+
+        if staker_winning_stake <= 0 {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::NothingToClaim);
+        }
+        if total_winning_stake <= 0 {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::InvalidWinningStake);
+        }
+
+        let (fee_bps, fee_collector) = get_fee_config(&env);
+        let total_fee = compute_total_fee(&env, total_losing_stake, fee_bps);
+        let net_losing = total_losing_stake
+            .checked_sub(total_fee)
+            .unwrap_or_else(|| overflow(&env));
+
+        let (staker_fee_share, payout) = compute_payout_parts(
+            &env,
+            staker_winning_stake,
+            total_winning_stake,
+            total_fee,
+            net_losing,
+        );
+
+        // Mark as claimed against the ORIGINAL WINNER before external calls
+        // (reentrancy guard) — this is the same flag `claim_payout` checks,
+        // so the original winner can no longer claim once the recovery
+        // agent has claimed on their behalf, and vice versa.
+        env.storage().instance().set(&claimed_key, &true);
+
+        if staker_fee_share > 0 {
+            registry_release_escrow(&env, &registry, call_id, &fee_collector, staker_fee_share);
+            emit_fee_collected(&env, call_id, staker_fee_share, &fee_collector);
+        }
+
+        // The actual tokens go to the recovery agent, not the original winner.
+        registry_release_escrow(&env, &registry, call_id, &recovery_agent, payout);
+
+        emit_recovery_claimed(&env, &recovery_agent, &original_winner, call_id, payout);
     }
 
     /// Batch-create claimable balances for multiple winning stakers (admin only).
@@ -931,6 +1070,7 @@ impl OutcomeManager {
         env.storage()
             .instance()
             .set(&InstanceKey::FinalOutcome(call_id), &pending);
+        storage::set_settled_at(&env, call_id, env.ledger().timestamp());
         let registry = get_registry(&env);
         registry_resolve_call(
             &env,

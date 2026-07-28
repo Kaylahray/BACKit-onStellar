@@ -1,0 +1,21 @@
+[package]
+name = "lending-pool"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+backit-shared = { workspace = true }
+prediction-market = { path = "../prediction_market" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+prediction-market-factory = { path = "../prediction_market_factory" }
+outcome-manager = { path = "../outcome_manager" }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
