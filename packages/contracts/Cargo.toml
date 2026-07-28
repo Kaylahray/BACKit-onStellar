@@ -4,6 +4,7 @@ members = [
   "shared",
   "call_registry",
   "outcome_manager",
+  "schelling_oracle",
   "prediction_market",
   "prediction_market_factory",
   "parlay_betting",
