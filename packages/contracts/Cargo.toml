@@ -11,6 +11,7 @@ members = [
   "gas_station",
   "oracle_marketplace",
   "lending_pool",
+  "launchpad",
   "contracts/hello-world",
 ]
 
