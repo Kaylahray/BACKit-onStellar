@@ -68,6 +68,20 @@ pub enum InstanceKey {
     /// Minimum price observations required for a TWAP to be considered
     /// valid. Default 3.
     TwapMinObservations,
+    /// Number of confirmations required for multi-block resolution. Default 5.
+    ResolutionConfirmations,
+    /// Minimum number of ledger blocks between first and last observation. Default 3.
+    MinConfirmationBlocks,
+}
+
+/// A price observation for multi-block resolution with oracle identity.
+#[contracttype]
+#[derive(Clone)]
+pub struct ResolutionObservation {
+    pub oracle: BytesN<32>,
+    pub price: i128,
+    pub timestamp: u64,
+    pub ledger_sequence: u32,
 }
 
 #[contracttype]
@@ -93,6 +107,7 @@ pub enum TempKey {
     Submission(BytesN<32>, u64),
     VoteCount(BytesN<32>, u64),
     PriceObservations(u64),
+    ResolutionObservations(u64),
 }
 
 /// Store the CallRegistry address in instance storage.
@@ -154,6 +169,8 @@ pub fn get_max_submission_delay(env: &Env) -> u64 {
 
 pub const DEFAULT_TWAP_WINDOW_SECS: u64 = 600;
 pub const DEFAULT_TWAP_MIN_OBSERVATIONS: u32 = 3;
+pub const DEFAULT_RESOLUTION_CONFIRMATIONS: u32 = 5;
+pub const DEFAULT_MIN_CONFIRMATION_BLOCKS: u32 = 3;
 
 pub fn set_twap_config(env: &Env, window_secs: u64, min_observations: u32) {
     env.storage()
@@ -176,4 +193,27 @@ pub fn get_twap_config(env: &Env) -> (u64, u32) {
         .get(&InstanceKey::TwapMinObservations)
         .unwrap_or(DEFAULT_TWAP_MIN_OBSERVATIONS);
     (window_secs, min_observations)
+}
+
+pub fn set_resolution_config(env: &Env, confirmations: u32, min_blocks: u32) {
+    env.storage()
+        .instance()
+        .set(&InstanceKey::ResolutionConfirmations, &confirmations);
+    env.storage()
+        .instance()
+        .set(&InstanceKey::MinConfirmationBlocks, &min_blocks);
+}
+
+pub fn get_resolution_config(env: &Env) -> (u32, u32) {
+    let confirmations = env
+        .storage()
+        .instance()
+        .get(&InstanceKey::ResolutionConfirmations)
+        .unwrap_or(DEFAULT_RESOLUTION_CONFIRMATIONS);
+    let min_blocks = env
+        .storage()
+        .instance()
+        .get(&InstanceKey::MinConfirmationBlocks)
+        .unwrap_or(DEFAULT_MIN_CONFIRMATION_BLOCKS);
+    (confirmations, min_blocks)
 }

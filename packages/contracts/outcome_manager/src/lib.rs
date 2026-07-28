@@ -28,8 +28,9 @@ use events::{
     emit_twap_computed,
 };
 use storage::{
-    get_twap_config, set_dispute_window, set_max_submission_delay, set_twap_config, InstanceKey,
-    OracleVote, Outcome, PersistentKey, PriceObservation, TempKey,
+    get_resolution_config, get_twap_config, set_dispute_window, set_max_submission_delay,
+    set_resolution_config, set_twap_config, InstanceKey, OracleVote, Outcome, PersistentKey,
+    PriceObservation, ResolutionObservation, TempKey,
 };
 use verification::{build_message, verify_signature};
 
@@ -1179,5 +1180,130 @@ impl OutcomeManager {
 
     pub fn is_oracle_active(env: Env, oracle_pubkey: BytesN<32>) -> bool {
         rotation::is_oracle_active(&env, &oracle_pubkey)
+    }
+
+    pub fn set_resolution_config(env: Env, confirmations: u32, min_blocks: u32) {
+        require_admin(&env);
+        set_resolution_config(&env, confirmations, min_blocks);
+    }
+
+    pub fn get_resolution_config(env: Env) -> (u32, u32) {
+        get_resolution_config(&env)
+    }
+
+    pub fn submit_resolution_observation(
+        env: Env,
+        call_id: u64,
+        observation: ResolutionObservation,
+        signature: BytesN<64>,
+    ) {
+        let oracles = get_oracles(&env);
+        if !oracles.contains_key(observation.oracle.clone()) {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::UnauthorizedOracle);
+        }
+
+        if env
+            .storage()
+            .instance()
+            .has(&InstanceKey::FinalOutcome(call_id))
+        {
+            soroban_sdk::panic_with_error!(&env, OutcomeError::AlreadySettled);
+        }
+
+        let key = TempKey::ResolutionObservations(call_id);
+        let mut observations: Vec<ResolutionObservation> = env
+            .storage()
+            .temporary()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for i in 0..observations.len() {
+            let existing = observations.get(i).unwrap();
+            if existing.oracle == observation.oracle {
+                soroban_sdk::panic_with_error!(&env, OutcomeError::DuplicateOracleObservation);
+            }
+        }
+
+        observations.push_back(observation.clone());
+        env.storage().temporary().set(&key, &observations);
+
+        let (confirmations, min_blocks) = get_resolution_config(&env);
+        if observations.len() < confirmations {
+            return;
+        }
+
+        let first = observations.get(0).unwrap();
+        let last = observations.get(observations.len() - 1).unwrap();
+        let block_span = last.ledger_sequence.saturating_sub(first.ledger_sequence);
+        if block_span < min_blocks {
+            return;
+        }
+
+        let mut prices = soroban_sdk::Vec::new(&env);
+        for i in 0..observations.len() {
+            prices.push_back(observations.get(i).unwrap().price);
+        }
+        let median_price = Self::compute_median(&env, &prices);
+
+        let outcome = Outcome {
+            call_id,
+            outcome: 1,
+            price: median_price,
+            timestamp: last.timestamp,
+        };
+
+        Self::finalize(&env, &get_registry(&env), outcome);
+    }
+
+    fn compute_median(env: &Env, prices: &Vec<i128>) -> i128 {
+        let mut sorted = Vec::new(env);
+        for i in 0..prices.len() {
+            sorted.push_back(prices.get(i).unwrap());
+        }
+        for i in 0..sorted.len() {
+            for j in (i + 1)..sorted.len() {
+                if sorted.get(i).unwrap() > sorted.get(j).unwrap() {
+                    let temp = sorted.get(i).unwrap();
+                    sorted.set(i, sorted.get(j).unwrap());
+                    sorted.set(j, temp);
+                }
+            }
+        }
+        let n = sorted.len();
+        if n % 2 == 1 {
+            sorted.get(n / 2).unwrap()
+        } else {
+            (sorted.get(n / 2 - 1).unwrap() + sorted.get(n / 2).unwrap()) / 2
+        }
+    }
+
+    pub fn get_observation_count(env: Env, call_id: u64) -> u32 {
+        let key = TempKey::ResolutionObservations(call_id);
+        let observations: Vec<ResolutionObservation> = env
+            .storage()
+            .temporary()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+        observations.len()
+    }
+
+    pub fn get_pending_resolution_price(env: Env, call_id: u64) -> Option<i128> {
+        let key = TempKey::ResolutionObservations(call_id);
+        let observations: Vec<ResolutionObservation> = env
+            .storage()
+            .temporary()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if observations.is_empty() {
+            return None;
+        }
+
+        let mut prices = soroban_sdk::Vec::new(&env);
+        for i in 0..observations.len() {
+            prices.push_back(observations.get(i).unwrap().price);
+        }
+
+        Some(Self::compute_median(&env, &prices))
     }
 }

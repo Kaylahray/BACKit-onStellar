@@ -63,4 +63,8 @@ pub enum OutcomeError {
     /// A price observation's timestamp falls outside `[call_end_ts -
     /// twap_window_secs, call_end_ts]`.
     ObservationOutsideWindow = 29,
+    /// Insufficient unique oracle observations for multi-block resolution.
+    InsufficientConfirmations = 30,
+    /// Duplicate oracle observation in confirmation window.
+    DuplicateOracleObservation = 31,
 }
