@@ -17,9 +17,9 @@ use conditional_staking::{ConditionalStrategy, StrategyAction, StrategyTrigger};
 use errors::FactoryError;
 use events::{emit_factory_initialized, emit_market_deployed, emit_strategy_cancelled, emit_strategy_created, emit_strategy_executed};
 use prediction_market::MarketInitArgs;
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Map, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Map, String, Vec};
 use storage::*;
-use types::FactoryConfig;
+use types::{FactoryConfig, Swarm, SwarmStage};
 
 #[cfg(not(test))]
 #[inline]
