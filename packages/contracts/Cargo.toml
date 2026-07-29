@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "call_registry",
+  "charity_markets",
   "contracts/hello-world",
   "dutch_auction",
   "gas_station",
@@ -15,6 +16,7 @@ members = [
   "prediction_market_factory",
   "schelling_oracle",
   "shared",
+  "tournament",
 ]
 
 [workspace.dependencies]
