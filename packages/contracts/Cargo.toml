@@ -1,18 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-  "shared",
   "call_registry",
+  "contracts/hello-world",
+  "dutch_auction",
+  "gas_station",
+  "index_fund",
+  "launchpad",
+  "lending_pool",
+  "oracle_marketplace",
   "outcome_manager",
-  "schelling_oracle",
+  "parlay_betting",
   "prediction_market",
   "prediction_market_factory",
-  "parlay_betting",
-  "gas_station",
-  "oracle_marketplace",
-  "lending_pool",
-  "launchpad",
-  "contracts/hello-world",
+  "schelling_oracle",
+  "shared",
 ]
 
 [workspace.dependencies]

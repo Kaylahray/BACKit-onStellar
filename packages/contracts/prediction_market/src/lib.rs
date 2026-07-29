@@ -937,7 +937,7 @@ impl PredictionMarket {
     pub fn get_reserve_status(
         env: Env,
     ) -> Result<ReserveVerification, MarketError> {
-        let config = get_config(&env).ok_or(MarketError::NotInitialized)?;
+        let _config = get_config(&env).ok_or(MarketError::NotInitialized)?;
         let call = get_call(&env).ok_or(MarketError::CallNotFound)?;
 
         let contract_address = env.current_contract_address();
