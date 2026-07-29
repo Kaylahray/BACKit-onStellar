@@ -1,5 +1,6 @@
 #![allow(deprecated)]
 #![allow(unused)]
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sdk::symbol_short;
 use soroban_sdk::{Address, Bytes, BytesN, Env, Symbol};
@@ -7,6 +8,8 @@ use soroban_sdk::{Address, Bytes, BytesN, Env, Symbol};
 pub const PARAM_MAX_STAKE_PER_USER: &str = "max_stake_per_user";
 pub const PARAM_MIN_STAKE: &str = "min_stake";
 pub const PARAM_STAKING_CUTOFF: &str = "staking_cutoff_secs";
+pub const PARAM_BASE_STAKE_LIMIT: &str = "base_stake_limit";
+pub const PARAM_REPUTATION_MULTIPLIER: &str = "reputation_multiplier";
 
 /// Emitted when a new call is created
 pub fn emit_call_created(
@@ -372,3 +375,42 @@ pub fn emit_sep10_verified(env: &Env, user: &Address, home_domain: &soroban_sdk:
         (user.clone(), home_domain.clone()),
     );
 }
+/// Emitted when a staker withdraws their stake early with a penalty.
+pub fn emit_stake_withdrawn(
+    env: &Env,
+    call_id: u64,
+    staker: &Address,
+    refunded_amount: i128,
+    penalty: i128,
+) {
+    env.events().publish(
+        ("call_registry", "stake_withdrawn"),
+        (call_id, staker.clone(), refunded_amount, penalty),
+    );
+}
+
+/// Emitted when a staker withdraws native XLM stake early with a penalty.
+pub fn emit_xlm_stake_withdrawn(
+    env: &Env,
+    call_id: u64,
+    staker: &Address,
+    refunded_amount: i128,
+    penalty: i128,
+) {
+    env.events().publish(
+        ("call_registry", "xlm_stake_withdrawn"),
+        (call_id, staker.clone(), refunded_amount, penalty),
+    );
+}
+
+/// Emitted when a user's on-chain reputation stats change (via `resolve_call`)
+/// enough to alter their reputation-weighted individual stake limit (see
+/// `crate::reputation`). `new_limit` is the freshly recomputed
+/// `get_user_stake_limit` value.
+pub fn emit_stake_limit_updated(env: &Env, user: &Address, new_limit: i128) {
+    env.events().publish(
+        ("call_registry", "StakeLimitUpdated"),
+        (user.clone(), new_limit),
+    );
+}
+

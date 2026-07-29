@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import FeedTabs from "@/components/FeedTabs";
+import { useState, useEffect } from "react";
+import FeedTabs, { type FeedTab } from "@/components/FeedTabs";
+import BookmarkedFeed from "@/components/BookmarkedFeed";
 import { CallCardSkeleton } from "@/components/CardCallSkeleton";
 import { EmptyState } from "@/components/EmptyState";
 import CallCard from "@/components/CallCard";
@@ -9,13 +10,27 @@ import { useFeed } from "@/hooks/useFeed";
 import FilterBar from "@/components/FilterBar";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import Link from "next/link";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, LayoutList, LayoutGrid } from "lucide-react";
+
+type ViewMode = "list" | "grid";
 
 export default function FeedPage() {
-  const [tab, setTab] = useState<"for-you" | "following">("for-you");
+  const [tab, setTab] = useState<FeedTab>("for-you");
   const [filters, setFilters] = useState<{ status: string | null }>({ status: null });
-  
-  const { items, loading, loadingMore, hasMore, loadMore } = useFeed(tab, filters);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("feedViewMode") as ViewMode) ?? "list";
+    }
+    return "list";
+  });
+
+  // The "bookmarked" tab is rendered by <BookmarkedFeed/>; keep useFeed on a
+  // valid feed type so it never requests an unsupported feed.
+  const feedTab = tab === "bookmarked" ? "for-you" : tab;
+  const { items, loading, loadingMore, hasMore, loadMore } = useFeed(
+    feedTab,
+    filters
+  );
 
   const cacheKey = `${tab}-${filters.status || 'all'}`;
   const { triggerRef, showBackToTop, scrollToTop } = useInfiniteScroll({
@@ -30,18 +45,61 @@ export default function FeedPage() {
     setFilters(newFilters);
   };
 
+  const toggleView = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem("feedViewMode", mode);
+  };
+
+  // Mobile always uses list view
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  const effectiveView = isMobile ? "list" : viewMode;
+
   return (
     <main className="max-w-2xl mx-auto p-4 relative min-h-screen pb-16">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Prediction Feed</h1>
-        <p className="text-gray-600">Explore trending predictions and stake on outcomes</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Prediction Feed</h1>
+          <p className="text-gray-600">Explore trending predictions and stake on outcomes</p>
+        </div>
+        {!isMobile && (
+          <div className="flex items-center gap-1 rounded-xl border border-gray-200 p-1">
+            <button
+              onClick={() => toggleView("list")}
+              aria-pressed={effectiveView === "list"}
+              aria-label="List view"
+              className={`p-2 rounded-lg transition-colors ${effectiveView === "list" ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-100"}`}
+            >
+              <LayoutList className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => toggleView("grid")}
+              aria-pressed={effectiveView === "grid"}
+              aria-label="Grid view"
+              className={`p-2 rounded-lg transition-colors ${effectiveView === "grid" ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-100"}`}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
-      
+
       <FeedTabs active={tab} onChange={setTab} />
       <FilterBar onFilterChange={handleFilterChange} />
 
+      {tab === "bookmarked" && <BookmarkedFeed />}
+
+      {tab !== "bookmarked" && (
+        <>
       {loading && (
-        <div className="space-y-4 mt-4">
+        <div className={effectiveView === "grid" ? "grid grid-cols-2 xl:grid-cols-3 gap-4 mt-4" : "space-y-4 mt-4"}>
           {[...Array(6)].map((_, i) => (
             <CallCardSkeleton key={i} />
           ))}
@@ -62,7 +120,7 @@ export default function FeedPage() {
         />
       )}
 
-      <div className="space-y-4 mt-4">
+      <div className={effectiveView === "grid" ? "grid grid-cols-2 xl:grid-cols-3 gap-4 mt-4" : "space-y-4 mt-4"}>
         {items.map((call) => (
           <Link key={call.id} href={`/calls/${call.id}`} className="block">
             <CallCard call={call} />
@@ -85,6 +143,8 @@ export default function FeedPage() {
         <div className="text-center text-gray-500 py-8 font-medium">
           No more markets
         </div>
+      )}
+        </>
       )}
 
       {/* Back to Top button */}

@@ -53,6 +53,7 @@ export interface Participant {
   amount: string;
   timestamp: string; // ISO date string
   txHash: string;
+  comment?: string;
 }
 
 export interface CallDetailData {
@@ -111,4 +112,4 @@ export type UserStakesResponse = {
   limit: number
 }
 
-export type TabType = 'created' | 'participated' | 'resolved' | 'followers' | 'following'
+export type TabType = 'created' | 'participated' | 'resolved' | 'followers' | 'following' | 'my-markets'

@@ -2,6 +2,8 @@ import "./globals.css";
 import { Inter } from "next/font/google";
 import { WalletProvider } from "@/components/WalletContext";
 import { PlatformConfigProvider } from "@/contexts/PlatformConfigContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
+import { WebSocketProvider } from "@/contexts/WebSocketContext";
 import { NavBar } from "@/components/NavBar";
 import { I18nProvider } from "@/components/I18nProvider";
 
@@ -12,6 +14,10 @@ export const metadata = {
   description: "Decentralized prediction markets on Stellar",
 };
 
+const WS_URL =
+  (process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001")
+    .replace(/^http/, "ws") + "/ws";
+
 export default function RootLayout({
   children,
 }: {
@@ -20,18 +26,17 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        {/*
-          WalletProvider must wrap everything so any child can call
-          useWalletContext(). NavBar is a Client Component that reads
-          the live wallet address and passes it to NotificationBell.
-        */}
         <I18nProvider>
-          <WalletProvider>
-            <PlatformConfigProvider>
-              <NavBar />
-              <main>{children}</main>
-            </PlatformConfigProvider>
-          </WalletProvider>
+          <ThemeProvider>
+            <WebSocketProvider url={WS_URL}>
+              <WalletProvider>
+                <PlatformConfigProvider>
+                  <NavBar />
+                  <main>{children}</main>
+                </PlatformConfigProvider>
+              </WalletProvider>
+            </WebSocketProvider>
+          </ThemeProvider>
         </I18nProvider>
       </body>
     </html>

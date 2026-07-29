@@ -9,7 +9,9 @@ import ProfileHeader from '@/components/ProfileHeader'
 import ProfileHeaderSkeleton from '@/components/skeletons/ProfileHeaderSkeleton'
 import ProfileStats from '@/components/ProfileStats'
 import ProfileTabs from '@/components/ProfileTabs'
+import BookmarkedFeed from '@/components/BookmarkedFeed'
 import { ProfileEditor } from '@/components/ProfileEditor'
+import NotificationPreferencesPanel from '@/components/NotificationPreferencesPanel'
 
 const PAGE_SIZE = 20
 
@@ -574,6 +576,19 @@ export default function StakesPage() {
               onLoadMoreFollowing={handleLoadMoreFollowing}
               onFollowToggle={handleFollowToggle}
             />
+
+            <section className="mt-8">
+              <h2 className="text-lg font-bold text-gray-900 mb-3">
+                Bookmarked Markets
+              </h2>
+              <BookmarkedFeed address={address} />
+            </section>
+
+            {isOwnProfile && (
+              <section className="mt-8">
+                <NotificationPreferencesPanel walletAddress={address} />
+              </section>
+            )}
           </>
         )}
 

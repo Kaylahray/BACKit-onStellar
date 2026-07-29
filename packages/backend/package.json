@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "",
   "author": "",
-  "private": true,
+  "private": true, 
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
@@ -19,7 +19,7 @@
     "test:coverage": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit --detectOpenHandles",
-    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js --dataSource src/database/data-source.ts",
+    "typeorm": "TS_NODE_ESM=false ts-node -r tsconfig-paths/register --compiler-options '{\"module\":\"commonjs\"}' ./node_modules/typeorm/cli.js --dataSource src/database/data-source.ts",
     "typeorm:generate": "npm run typeorm -- migration:generate",
     "typeorm:run": "npm run typeorm -- migration:run",
     "typeorm:revert": "npm run typeorm -- migration:revert",
@@ -142,6 +142,12 @@
         "lines": 80,
         "statements": 80
       }
+    }
+  },
+  "ts-node": {
+    "esm": false,
+    "compilerOptions": {
+      "module": "commonjs"
     }
   }
 }

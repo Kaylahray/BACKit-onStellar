@@ -22,12 +22,14 @@ pub enum DataKey {
     StakerCallSeen(Address, u64),
     CreatorStats(Address),
     UserStake(u64, Address, u32),
+    UserTotalStakeVolume(Address),
     UpStakerCount(u64),
     DownStakerCount(u64),
     VoidRefundClaimed(u64, Address),
     ExpiredRefundClaimed(u64, Address),
     InstanceEntryCount,
     Sep10Domain(Address),
+    Locked,
 }
 
 /// Store contract configuration
@@ -90,6 +92,7 @@ pub fn get_call(env: &Env, call_id: u64) -> Option<Call> {
 }
 
 /// Check whether a call exists in persistent storage
+#[allow(dead_code)]
 pub fn call_exists(env: &Env, call_id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Call(call_id))
 }
@@ -301,12 +304,14 @@ pub fn get_user_stake(env: &Env, call_id: u64, staker: &Address, position: u32) 
 }
 
 /// Get up staker count for a call
+#[allow(dead_code)]
 pub fn get_up_staker_count(env: &Env, call_id: u64) -> u32 {
     let key = DataKey::UpStakerCount(call_id);
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
 /// Set up staker count for a call
+#[allow(dead_code)]
 pub fn set_up_staker_count(env: &Env, call_id: u64, count: u32) {
     let key = DataKey::UpStakerCount(call_id);
     env.storage().persistent().set(&key, &count);
@@ -318,12 +323,14 @@ pub fn set_up_staker_count(env: &Env, call_id: u64, count: u32) {
 }
 
 /// Get down staker count for a call
+#[allow(dead_code)]
 pub fn get_down_staker_count(env: &Env, call_id: u64) -> u32 {
     let key = DataKey::DownStakerCount(call_id);
     env.storage().persistent().get(&key).unwrap_or(0)
 }
 
 /// Set down staker count for a call
+#[allow(dead_code)]
 pub fn set_down_staker_count(env: &Env, call_id: u64, count: u32) {
     let key = DataKey::DownStakerCount(call_id);
     env.storage().persistent().set(&key, &count);
@@ -358,6 +365,38 @@ pub fn get_creator_stats(env: &Env, creator: &Address) -> CreatorStats {
 pub fn set_creator_stats(env: &Env, creator: &Address, stats: &CreatorStats) {
     let key = DataKey::CreatorStats(creator.clone());
     env.storage().persistent().set(&key, stats);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
+/// Get a user's cumulative total stake volume across all calls and positions
+/// they have ever staked on. Used as the "volume" input to the
+/// reputation-weighted stake-limit formula (see `crate::reputation`).
+pub fn get_user_total_stake_volume(env: &Env, user: &Address) -> i128 {
+    let key = DataKey::UserTotalStakeVolume(user.clone());
+    let result: Option<i128> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+    }
+    result.unwrap_or(0)
+}
+
+/// Accumulate `amount` into `user`'s cumulative total stake volume tracker.
+/// Uses checked addition; overflow panics with `CallRegistryError::Overflow`.
+pub fn record_user_stake_volume(env: &Env, user: &Address, amount: i128) {
+    let key = DataKey::UserTotalStakeVolume(user.clone());
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    let updated = current
+        .checked_add(amount)
+        .unwrap_or_else(|| crate::errors::overflow(env));
+    env.storage().persistent().set(&key, &updated);
     env.storage().persistent().extend_ttl(
         &key,
         PERSISTENT_LIFETIME_THRESHOLD,
@@ -446,4 +485,22 @@ pub fn set_sep10_domain(env: &Env, user: &Address, domain: &Bytes) {
 pub fn get_sep10_domain(env: &Env, user: &Address) -> Option<Bytes> {
     let key = DataKey::Sep10Domain(user.clone());
     env.storage().persistent().get(&key)
+}
+
+/// Returns true if the reentrancy lock is currently held.
+pub fn is_locked(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::Locked)
+        .unwrap_or(false)
+}
+
+/// Acquire the reentrancy lock. Caller must call `release_lock` before returning.
+pub fn acquire_lock(env: &Env) {
+    env.storage().instance().set(&DataKey::Locked, &true);
+}
+
+/// Release the reentrancy lock.
+pub fn release_lock(env: &Env) {
+    env.storage().instance().set(&DataKey::Locked, &false);
 }

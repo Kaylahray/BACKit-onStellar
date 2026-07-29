@@ -16,6 +16,9 @@ jobs:
   test-and-build:
     name: Test & Build Contracts
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: sccache
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -24,26 +27,31 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown,wasm32v1-none
-          components: clippy, rustfmt
 
       - name: Ensure wasm32v1-none target is available
         run: rustup target add wasm32v1-none
 
-      - name: Cache Cargo & Rust Build
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache Cargo Registry & Git Dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            packages/contracts/target
-          key: ${{ runner.os }}-cargo-contracts-${{ hashFiles('packages/contracts/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('packages/contracts/*/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-contracts-
+            ${{ runner.os }}-cargo-registry-
 
-      - name: Run Cargo Test
-        run: |
-          cd packages/contracts
-          cargo test
+      - name: Cache Contract Build Artifacts
+        uses: actions/cache@v4
+        with:
+          path: packages/contracts/target
+          key: ${{ runner.os }}-contracts-target-${{ hashFiles('packages/contracts/*/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-contracts-target-${{ hashFiles('packages/contracts/*/Cargo.toml') }}-
+            ${{ runner.os }}-contracts-target-
 
       - name: Install Stellar CLI
         env:
@@ -60,8 +68,6 @@ jobs:
             -o "$release_json" \
             "https://api.github.com/repos/stellar/stellar-cli/releases/latest"
 
-          # File + one-line python3 -c: avoids `curl | python3 <<'PY'` (heredoc steals stdin)
-          # and avoids multiline -c (breaks YAML if continuation lines lose indent).
           STELLAR_TAG="$(python3 -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); exec("try:\n data=json.loads(p.read_text())\nexcept json.JSONDecodeError as e:\n raise SystemExit(\"Failed to parse GitHub API response: \"+str(e))\ntag=data.get(\"tag_name\")\nif not tag:\n raise SystemExit(\"Failed to fetch stellar-cli latest release tag_name: \"+str(data.get(\"message\") or \"no tag_name\"))\nprint(tag)")' "$release_json")"
 
           STELLAR_VERSION="${STELLAR_TAG#v}"
@@ -71,10 +77,27 @@ jobs:
           sudo mv stellar /usr/local/bin/
           stellar --version
 
-      - name: Build Contracts with Stellar CLI
+      - name: Build prediction_market WASM for factory tests
+        run: |
+          cd packages/contracts
+          rm -f target/wasm32-unknown-unknown/release/prediction_market*.wasm
+          rm -f target/wasm32v1-none/release/prediction_market*.wasm
+          cd prediction_market
+          stellar contract build
+          ls -la ../target/wasm32v1-none/release/prediction_market*.wasm
+
+      - name: Run Cargo Test (debug, x86_64)
+        run: |
+          cd packages/contracts
+          cargo test --workspace
+
+      - name: Build All Contracts with Stellar CLI (release, wasm)
         run: |
           cd packages/contracts
           stellar contract build
+
+      - name: Report sccache Stats
+        run: sccache --show-stats
 
       - name: Report Contract Sizes
         run: |

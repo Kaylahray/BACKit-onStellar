@@ -71,7 +71,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2
@@ -138,6 +138,12 @@ jobs:
       - name: Build Backend
         if: steps.backend_changes.outputs.backend_relevant == 'true'
         run: pnpm --filter backend build
+
+      - name: Reset Test Database
+        if: steps.backend_changes.outputs.backend_relevant == 'true'
+        run: |
+          PGPASSWORD=password psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS backit_test;"
+          PGPASSWORD=password psql -h localhost -U postgres -c "CREATE DATABASE backit_test;"
 
       - name: Run Backend Startup Smoke Test
         if: steps.backend_changes.outputs.backend_relevant == 'true'

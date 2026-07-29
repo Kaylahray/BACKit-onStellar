@@ -21,9 +21,9 @@ export enum CallOutcome {
 }
 
 @Entity('prediction_calls')
-@Index(['userId', 'status'])
-@Index(['settledAt'])
-@Index(['status', 'outcome'])
+@Index('IDX_prediction_call_user_status', ['userId', 'status'])
+@Index('IDX_prediction_call_settled', ['settledAt'])
+@Index('IDX_prediction_call_status_outcome', ['status', 'outcome'])
 export class PredictionCall {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -55,7 +55,7 @@ export class PredictionCall {
 }
 
 @Entity('leaderboard_snapshots')
-@Index(['period', 'snapshotDate'])
+@Index('IDX_leaderboard_snap_period_date', ['period', 'snapshotDate'])
 export class LeaderboardSnapshot {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -2,9 +2,9 @@
 
 import { Participant } from "@/types";
 import { useEffect, useRef, useState } from "react";
+import { useSocket } from "@/contexts/WebSocketContext";
 
 const PAGE_SIZE = 10;
-const POLL_INTERVAL = 15_000;
 
 function timeAgo(timestamp: string) {
   const s = Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000);
@@ -25,29 +25,36 @@ export default function ActivityLog({ participants, callId }: Props) {
   const [entries, setEntries] = useState<Participant[]>(participants.slice(0, 50));
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
-  const prevTxHashes = useRef<Set<string>>(new Set(participants.map(p => p.txHash)));
+  const seenTxHashes = useRef<Set<string>>(new Set(participants.map((p) => p.txHash)));
+  const { status, send } = useSocket();
 
+  // Subscribe to call-specific stake events when connected
   useEffect(() => {
-    const poll = setInterval(async () => {
+    if (status === "connected") {
+      send(JSON.stringify({ event: "call:subscribe", data: { callId } }));
+    }
+  }, [status, callId, send]);
+
+  // Listen for real-time stake events via window message relay from WebSocketContext
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
       try {
-        const res = await fetch(`/api/calls/${callId}/stakes/recent`);
-        if (!res.ok) return;
-        const fresh: Participant[] = await res.json();
-        const incoming = fresh.filter(p => !prevTxHashes.current.has(p.txHash));
-        if (incoming.length === 0) return;
-
-        incoming.forEach(p => prevTxHashes.current.add(p.txHash));
-        setNewIds(new Set(incoming.map(p => p.txHash)));
-        setEntries(prev => [...incoming, ...prev].slice(0, 50));
-
-        // Clear slide-in highlight after animation completes
-        setTimeout(() => setNewIds(new Set()), 600);
+        const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+        if (msg.event === "call:stake" && msg.data?.callId === callId) {
+          const incoming: Participant = msg.data.stake;
+          if (seenTxHashes.current.has(incoming.txHash)) return;
+          seenTxHashes.current.add(incoming.txHash);
+          setNewIds(new Set([incoming.txHash]));
+          setEntries((prev) => [incoming, ...prev].slice(0, 50));
+          setTimeout(() => setNewIds(new Set()), 600);
+        }
       } catch {
-        // silently ignore poll errors
+        // ignore non-JSON messages
       }
-    }, POLL_INTERVAL);
+    }
 
-    return () => clearInterval(poll);
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
   }, [callId]);
 
   return (
@@ -86,7 +93,6 @@ export default function ActivityLog({ participants, callId }: Props) {
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    {/* Avatar placeholder */}
                     <div className="w-7 h-7 rounded-full bg-gray-200 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-gray-500">
                       {entry.address.slice(0, 2).toUpperCase()}
                     </div>
@@ -94,9 +100,7 @@ export default function ActivityLog({ participants, callId }: Props) {
                       {entry.address.slice(0, 6)}…{entry.address.slice(-4)}
                     </span>
                     <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full ${
-                      isUp
-                        ? "bg-green-100 text-green-700"
-                        : "bg-red-100 text-red-700"
+                      isUp ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
                     }`}>
                       {isUp ? "▲ UP" : "▼ DOWN"}
                     </span>
@@ -108,6 +112,11 @@ export default function ActivityLog({ participants, callId }: Props) {
                     <p className="text-[10px] text-gray-400">{timeAgo(entry.timestamp)}</p>
                   </div>
                 </div>
+                {entry.comment && (
+                  <p className="mt-1.5 ml-9 text-xs text-gray-500 italic leading-snug">
+                    &ldquo;{entry.comment}&rdquo;
+                  </p>
+                )}
               </div>
             );
           })
@@ -117,7 +126,7 @@ export default function ActivityLog({ participants, callId }: Props) {
       {visible < entries.length && (
         <div className="px-4 py-3 border-t border-gray-100 text-center">
           <button
-            onClick={() => setVisible(v => Math.min(v + PAGE_SIZE, entries.length))}
+            onClick={() => setVisible((v) => Math.min(v + PAGE_SIZE, entries.length))}
             className="text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
           >
             Load more ({entries.length - visible} remaining)

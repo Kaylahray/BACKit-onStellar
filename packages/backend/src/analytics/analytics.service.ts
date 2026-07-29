@@ -21,6 +21,72 @@ import {
 import { Call } from './entities/call.entity';
 import { Stake } from './entities/stake.entity';
 
+// Raw query result types
+interface DailyProfitRow {
+  dailyProfit: string | null;
+  date: string;
+}
+
+interface WeeklyProfitRow {
+  weeklyProfit: string | null;
+  date: string;
+}
+
+interface AccuracyRow {
+  correct: string | null;
+  total: string | null;
+  date: string;
+}
+
+interface WinLossRow {
+  wins: string;
+  losses: string;
+  pending: string;
+  total: string;
+}
+
+interface ProfitLossRow {
+  totalProfitLoss: string | null;
+}
+
+interface AccuracyStatsRow {
+  correct: string | null;
+  total: string | null;
+}
+
+// Raw query result types
+interface DailyProfitRow {
+  dailyProfit: string | null;
+  date: string;
+}
+
+interface WeeklyProfitRow {
+  weeklyProfit: string | null;
+  date: string;
+}
+
+interface AccuracyRow {
+  correct: string | null;
+  total: string | null;
+  date: string;
+}
+
+interface WinLossRow {
+  wins: string;
+  losses: string;
+  pending: string;
+  total: string;
+}
+
+interface ProfitLossRow {
+  totalProfitLoss: string | null;
+}
+
+interface AccuracyStatsRow {
+  correct: string | null;
+  total: string | null;
+}
+
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
@@ -172,13 +238,15 @@ export class AnalyticsService {
 
     // Convert to cumulative values
     let cumulative = 0;
-    const dataPoints: ProfitDataPoint[] = rawData.map((row) => {
-      cumulative += parseFloat(row.dailyProfit || 0);
-      return {
-        date: new Date(row.date).toISOString().split('T')[0],
-        value: Number(cumulative.toFixed(7)), // Stellar precision
-      };
-    });
+    const dataPoints: ProfitDataPoint[] = (rawData as DailyProfitRow[]).map(
+      (row) => {
+        cumulative += parseFloat(row.dailyProfit ?? '0');
+        return {
+          date: new Date(row.date).toISOString().split('T')[0],
+          value: Number(cumulative.toFixed(7)), // Stellar precision
+        };
+      },
+    );
 
     // Fill in missing dates with previous cumulative value
     return this.fillMissingDates(dataPoints, startDate, endDate, 'day');
@@ -206,13 +274,15 @@ export class AnalyticsService {
 
     // Convert to cumulative values
     let cumulative = 0;
-    const dataPoints: ProfitDataPoint[] = rawData.map((row) => {
-      cumulative += parseFloat(row.weeklyProfit || 0);
-      return {
-        date: new Date(row.date).toISOString().split('T')[0],
-        value: Number(cumulative.toFixed(7)),
-      };
-    });
+    const dataPoints: ProfitDataPoint[] = (rawData as WeeklyProfitRow[]).map(
+      (row) => {
+        cumulative += parseFloat(row.weeklyProfit ?? '0');
+        return {
+          date: new Date(row.date).toISOString().split('T')[0],
+          value: Number(cumulative.toFixed(7)),
+        };
+      },
+    );
 
     return this.fillMissingDates(dataPoints, startDate, endDate, 'week');
   }
@@ -247,18 +317,20 @@ export class AnalyticsService {
     let totalCorrect = 0;
     let totalResolved = 0;
 
-    const dataPoints: AccuracyDataPoint[] = rawData.map((row) => {
-      totalCorrect += parseInt(row.correct || 0);
-      totalResolved += parseInt(row.total || 0);
+    const dataPoints: AccuracyDataPoint[] = (rawData as AccuracyRow[]).map(
+      (row) => {
+        totalCorrect += parseInt(row.correct ?? '0');
+        totalResolved += parseInt(row.total ?? '0');
 
-      const accuracy =
-        totalResolved > 0 ? (totalCorrect / totalResolved) * 100 : 0;
+        const accuracy =
+          totalResolved > 0 ? (totalCorrect / totalResolved) * 100 : 0;
 
-      return {
-        date: new Date(row.date).toISOString().split('T')[0],
-        value: Number(accuracy.toFixed(2)),
-      };
-    });
+        return {
+          date: new Date(row.date).toISOString().split('T')[0],
+          value: Number(accuracy.toFixed(2)),
+        };
+      },
+    );
 
     return this.fillMissingDates(dataPoints, startDate, endDate, 'day', true);
   }
@@ -293,11 +365,12 @@ export class AnalyticsService {
       .andWhere('stake.createdAt <= :endDate', { endDate })
       .getRawOne();
 
+    const r = result as WinLossRow | null;
     return {
-      wins: parseInt(result?.wins || 0),
-      losses: parseInt(result?.losses || 0),
-      pending: parseInt(result?.pending || 0),
-      total: parseInt(result?.total || 0),
+      wins: parseInt(r?.wins || '0'),
+      losses: parseInt(r?.losses || '0'),
+      pending: parseInt(r?.pending || '0'),
+      total: parseInt(r?.total || '0'),
     };
   }
 
@@ -332,9 +405,11 @@ export class AnalyticsService {
       .andWhere('call.resolvedAt <= :endDate', { endDate })
       .getRawOne();
 
-    const totalProfitLoss = parseFloat(profitResult?.totalProfitLoss || 0);
-    const correct = parseInt(accuracyResult?.correct || 0);
-    const total = parseInt(accuracyResult?.total || 0);
+    const pr = profitResult as ProfitLossRow | null;
+    const ar = accuracyResult as AccuracyStatsRow | null;
+    const totalProfitLoss = parseFloat(pr?.totalProfitLoss || '0');
+    const correct = parseInt(ar?.correct || '0');
+    const total = parseInt(ar?.total || '0');
     const overallAccuracy = total > 0 ? (correct / total) * 100 : 0;
 
     return {
@@ -734,5 +809,79 @@ export class AnalyticsService {
       data,
       expiresAt: Date.now() + ttlSeconds * 1000,
     });
+  }
+
+  /**
+   * Update win streak for a user after a call outcome is resolved.
+   * Called when indexer processes a resolved outcome event.
+   */
+  async updateWinStreak(userAddress: string, won: boolean): Promise<void> {
+    const result = await this.dataSource.query(
+      `SELECT id, "currentWinStreak", "bestWinStreak" FROM users WHERE "walletAddress" = $1`,
+      [userAddress],
+    );
+    if (!result.length) return;
+
+    const user = result[0];
+    const currentStreak = won ? (user.currentWinStreak || 0) + 1 : 0;
+    const bestStreak = Math.max(user.bestWinStreak || 0, currentStreak);
+
+    await this.dataSource.query(
+      `UPDATE users SET "currentWinStreak" = $1, "bestWinStreak" = $2 WHERE id = $3`,
+      [currentStreak, bestStreak, user.id],
+    );
+  }
+
+  async getCreatedCalls(
+    creatorAddress: string,
+    page: number,
+    limit: number,
+    status?: string,
+  ) {
+    const offset = (page - 1) * limit;
+    const params: unknown[] = [creatorAddress, limit, offset];
+    const statusClause = status ? `AND c.status = $4` : '';
+    if (status) params.push(status.toUpperCase());
+
+    const rows = await this.dataSource.query(
+      `
+      SELECT c.id, c.title, c.status, c."createdAt", c."resolvedAt", c."expiresAt",
+             COALESCE(c."totalYesStake", 0) AS "totalYesStake",
+             COALESCE(c."totalNoStake", 0) AS "totalNoStake",
+             COUNT(DISTINCT s."userAddress") AS "uniqueStakers"
+      FROM calls c
+      LEFT JOIN stakes s ON s."callId" = c.id
+      WHERE c."creatorAddress" = $1 ${statusClause}
+      GROUP BY c.id
+      ORDER BY c."createdAt" DESC
+      LIMIT $2 OFFSET $3
+      `,
+      params,
+    );
+
+    const [countRow] = await this.dataSource.query(
+      `SELECT COUNT(*) AS total FROM calls WHERE "creatorAddress" = $1 ${statusClause}`,
+      status ? [creatorAddress, status.toUpperCase()] : [creatorAddress],
+    );
+
+    return { data: rows, total: parseInt(countRow.total), page, limit };
+  }
+
+  async getCreatedCallsStats(creatorAddress: string) {
+    const [row] = await this.dataSource.query(
+      `
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status IN ('RESOLVED_YES','RESOLVED_NO')) AS resolved,
+        COALESCE(SUM(COALESCE("totalYesStake",0) + COALESCE("totalNoStake",0)), 0) AS "totalVolume"
+      FROM calls WHERE "creatorAddress" = $1
+      `,
+      [creatorAddress],
+    );
+    return {
+      totalCreated: parseInt(row.total),
+      totalResolved: parseInt(row.resolved),
+      totalStakeVolumeAttracted: parseFloat(row.totalVolume),
+    };
   }
 }

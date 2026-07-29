@@ -3,9 +3,13 @@ import { DataSource, DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config();
 
 const isProduction = process.env.NODE_ENV === 'production';
+
+// Use process.cwd() so this file works whether loaded via ts-node (src/)
+// or as compiled JS (dist/), without relying on __dirname.
+const root = process.cwd();
 
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
@@ -15,22 +19,17 @@ export const dataSourceOptions: DataSourceOptions = {
   password: process.env.DB_PASSWORD ?? '',
   database: process.env.DB_NAME ?? 'backit',
 
-  // ─── NEVER use synchronize in staging/production ─────────────────────────
+  // NEVER use synchronize in staging/production
   synchronize: false,
 
-  // ─── Entities ────────────────────────────────────────────────────────────
-  // Resolved at runtime so the CLI (which compiles to JS) still finds them.
-  entities: [path.join(__dirname, '..', '**', '*.entity.{ts,js}')],
+  entities: [path.join(root, 'src', '**', '*.entity.{ts,js}')],
 
-  // ─── Migrations ──────────────────────────────────────────────────────────
-  migrations: [path.join(__dirname, 'migrations', '*.{ts,js}')],
+  migrations: [path.join(root, 'src', 'database', 'migrations', '*.{ts,js}')],
   migrationsTableName: 'typeorm_migrations',
 
-  // ─── Logging ─────────────────────────────────────────────────────────────
   logging: !isProduction,
   logger: 'advanced-console',
 
-  // ─── SSL (production) ────────────────────────────────────────────────────
   ssl: isProduction ? { rejectUnauthorized: true } : false,
 };
 

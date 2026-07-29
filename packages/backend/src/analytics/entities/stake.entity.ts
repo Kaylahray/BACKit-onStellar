@@ -11,9 +11,9 @@ import {
 import { Call } from './call.entity';
 
 @Entity('stakes')
-@Index(['userAddress', 'createdAt'])
-@Index(['callId', 'userAddress'])
-@Index(['userAddress', 'profitLoss'])
+@Index('IDX_stake_user_created', ['userAddress', 'createdAt'])
+@Index('IDX_stake_call_user', ['callId', 'userAddress'])
+@Index('IDX_stake_user_profit_loss', ['userAddress', 'profitLoss'])
 export class Stake {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -37,6 +37,9 @@ export class Stake {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   transactionHash?: string;
+
+  @Column({ type: 'varchar', length: 140, nullable: true })
+  comment?: string;
 
   @CreateDateColumn()
   @Index()

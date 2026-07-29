@@ -1,9 +1,10 @@
 #![cfg(test)]
+#![allow(deprecated)]
 
 extern crate std;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, Address, Bytes, BytesN, Env, Map,
+    contract, contractimpl, contracttype, testutils::{Address as _, Ledger as _}, Address, Bytes, BytesN, Env, Map,
     Vec,
 };
 
@@ -28,12 +29,86 @@ pub struct MockRegistry;
 
 #[contractimpl]
 impl MockRegistry {
-    pub fn resolve_call(_env: Env, _call_id: u64, _outcome: u32, _end_price: i128) {}
-    pub fn release_escrow(_env: Env, _call_id: u64, _to: Address, _amount: i128) {}
-    pub fn mark_settled(_env: Env, _call_id: u64) {}
+    fn default_mock_call(env: &Env, call_id: u64) -> Call {
+        let outcome_count = 2u32;
+        let mut outcome_stakes = Map::new(env);
+        outcome_stakes.set(1, 0);
+        outcome_stakes.set(2, 0);
+
+        let mut stakes = Map::new(env);
+        stakes.set(1, Map::new(env));
+        stakes.set(2, Map::new(env));
+
+        Call {
+            id: call_id,
+            creator: Address::generate(env),
+            stake_token: Address::generate(env),
+            stake_amount: 1,
+            end_ts: 0,
+            token_address: Address::generate(env),
+            pair_id: Bytes::from_slice(env, b"mock"),
+            metadata_hash: BytesN::from_array(env, &[0u8; 32]),
+            outcome_count,
+            outcome_stakes,
+            stakes,
+            outcome: 0,
+            start_price: 100,
+            end_price: 0,
+            condition: ConditionType::TargetAbove(100),
+            settled: false,
+            voided: false,
+            created_at: 0,
+            cancelled: false,
+            metadata_version: 0,
+            share_tokens: Map::new(env),
+        }
+    }
+
+    pub fn resolve_call(
+        env: Env,
+        call_id: u64,
+        outcome: u32,
+        end_price: i128,
+    ) -> Result<Call, CallRegistryError> {
+        let mut call: Call = env
+            .storage()
+            .instance()
+            .get(&MockDataKey::Call(call_id))
+            .unwrap_or_else(|| Self::default_mock_call(&env, call_id));
+        call.outcome = outcome;
+        call.end_price = end_price;
+        env.storage()
+            .instance()
+            .set(&MockDataKey::Call(call_id), &call);
+        Ok(call)
+    }
+
+    pub fn release_escrow(
+        _env: Env,
+        _call_id: u64,
+        _to: Address,
+        _amount: i128,
+    ) -> Result<(), CallRegistryError> {
+        Ok(())
+    }
+
+    pub fn mark_settled(env: Env, call_id: u64) -> Result<(), CallRegistryError> {
+        let mut call: Call = env
+            .storage()
+            .instance()
+            .get(&MockDataKey::Call(call_id))
+            .unwrap_or_else(|| Self::default_mock_call(&env, call_id));
+        call.settled = true;
+        env.storage()
+            .instance()
+            .set(&MockDataKey::Call(call_id), &call);
+        Ok(())
+    }
 
     pub fn set_mock_call(env: Env, call_id: u64, call: Call) {
-        env.storage().instance().set(&MockDataKey::Call(call_id), &call);
+        env.storage()
+            .instance()
+            .set(&MockDataKey::Call(call_id), &call);
     }
 
     pub fn set_mock_staker_stake(
@@ -43,9 +118,10 @@ impl MockRegistry {
         position: u32,
         amount: i128,
     ) {
-        env.storage()
-            .instance()
-            .set(&MockDataKey::StakerStake(call_id, staker, position), &amount);
+        env.storage().instance().set(
+            &MockDataKey::StakerStake(call_id, staker, position),
+            &amount,
+        );
     }
 
     pub fn get_call(env: Env, call_id: u64) -> Result<Call, CallRegistryError> {
@@ -334,7 +410,6 @@ fn setup_with_fee(env: &Env, fee_bps: u32) -> (Address, Address, OutcomeManagerC
     (fee_collector, registry_id, client)
 }
 
-
 // ─── Claimable Balance Tests ───────────────────────────────────────────────────
 
 #[test]
@@ -346,7 +421,10 @@ fn test_claim_payout_stores_claimable_balance_id() {
     client.claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
 
     let balance_id = client.get_claimable_balance_id(&1u64, &staker);
-    assert!(balance_id.is_some(), "claimable balance id should be stored");
+    assert!(
+        balance_id.is_some(),
+        "claimable balance id should be stored"
+    );
 }
 
 #[test]
@@ -381,7 +459,12 @@ fn test_batch_create_claimable_balances_stores_ids() {
     stakes.push_back(40_i128);
 
     client.batch_create_claimable_balances(
-        &registry_id, &1u64, &stakers, &stakes, &100_i128, &100_i128,
+        &registry_id,
+        &1u64,
+        &stakers,
+        &stakes,
+        &100_i128,
+        &100_i128,
     );
 
     assert!(client.get_claimable_balance_id(&1u64, &staker1).is_some());
@@ -399,7 +482,12 @@ fn test_batch_create_claimable_balances_empty_fails() {
     let stakes: Vec<i128> = Vec::new(&env);
 
     let result = client.try_batch_create_claimable_balances(
-        &registry_id, &1u64, &stakers, &stakes, &100_i128, &100_i128,
+        &registry_id,
+        &1u64,
+        &stakers,
+        &stakes,
+        &100_i128,
+        &100_i128,
     );
     assert_contract_error(result, OutcomeError::EmptyBatch);
 }
@@ -416,11 +504,21 @@ fn test_batch_create_claimable_balances_duplicate_fails() {
     stakes.push_back(100_i128);
 
     client.batch_create_claimable_balances(
-        &registry_id, &1u64, &stakers, &stakes, &100_i128, &100_i128,
+        &registry_id,
+        &1u64,
+        &stakers,
+        &stakes,
+        &100_i128,
+        &100_i128,
     );
 
     let result = client.try_batch_create_claimable_balances(
-        &registry_id, &1u64, &stakers, &stakes, &100_i128, &100_i128,
+        &registry_id,
+        &1u64,
+        &stakers,
+        &stakes,
+        &100_i128,
+        &100_i128,
     );
     assert_contract_error(result, OutcomeError::AlreadyClaimed);
 }
@@ -432,7 +530,6 @@ fn test_get_claimable_balance_id_none_before_claim() {
     let staker = Address::generate(&env);
     assert!(client.get_claimable_balance_id(&1u64, &staker).is_none());
 }
-
 
 // ─── Initialization Tests ──────────────────────────────────────────────────────
 
@@ -514,16 +611,28 @@ fn test_quorum_reached_with_two_oracles() {
     let sig1 = sign_outcome(&env, &s1, call_id, outcome_val, price, ts);
     client.submit_outcome(
         &registry_id,
-        &SignedOutcome { call_id, outcome: outcome_val, price, timestamp: ts,
-            oracle_pubkey: p1.clone(), signature: sig1 },
+        &SignedOutcome {
+            call_id,
+            outcome: outcome_val,
+            price,
+            timestamp: ts,
+            oracle_pubkey: p1.clone(),
+            signature: sig1,
+        },
         &0u64,
     );
 
     let sig2 = sign_outcome(&env, &s2, call_id, outcome_val, price, ts);
     client.submit_outcome(
         &registry_id,
-        &SignedOutcome { call_id, outcome: outcome_val, price, timestamp: ts,
-            oracle_pubkey: p2.clone(), signature: sig2 },
+        &SignedOutcome {
+            call_id,
+            outcome: outcome_val,
+            price,
+            timestamp: ts,
+            oracle_pubkey: p2.clone(),
+            signature: sig2,
+        },
         &0u64,
     );
 
@@ -533,8 +642,24 @@ fn test_quorum_reached_with_two_oracles() {
     let stored_votes = client.get_votes(&call_id);
     assert_eq!(stored_votes.len(), 2);
     assert_eq!(client.get_vote_count(&call_id), 2);
-    assert_eq!(stored_votes.get(0).unwrap(), OracleVote { oracle: p1, outcome: outcome_val, price, timestamp: ts });
-    assert_eq!(stored_votes.get(1).unwrap(), OracleVote { oracle: p2, outcome: outcome_val, price, timestamp: ts });
+    assert_eq!(
+        stored_votes.get(0).unwrap(),
+        OracleVote {
+            oracle: p1,
+            outcome: outcome_val,
+            price,
+            timestamp: ts
+        }
+    );
+    assert_eq!(
+        stored_votes.get(1).unwrap(),
+        OracleVote {
+            oracle: p2,
+            outcome: outcome_val,
+            price,
+            timestamp: ts
+        }
+    );
 }
 
 #[test]
@@ -549,8 +674,14 @@ fn test_submit_unauthorized_oracle_fails() {
 
     let result = client.try_submit_outcome(
         &mock_registry,
-        &SignedOutcome { call_id, outcome: 1, price: 100, timestamp: 9000,
-            oracle_pubkey: pubkey2, signature: sig },
+        &SignedOutcome {
+            call_id,
+            outcome: 1,
+            price: 100,
+            timestamp: 9000,
+            oracle_pubkey: pubkey2,
+            signature: sig,
+        },
         &0u64,
     );
     assert_contract_error(result, OutcomeError::UnauthorizedOracle);
@@ -576,7 +707,10 @@ fn test_submit_duplicate_submission_fails() {
 
     let registry_id = env.register_contract(None, MockRegistry);
     let signed = SignedOutcome {
-        call_id: 7, outcome: 1, price: 100, timestamp: 1000,
+        call_id: 7,
+        outcome: 1,
+        price: 100,
+        timestamp: 1000,
         oracle_pubkey: pubkey1.clone(),
         signature: sign_outcome(&env, &secret1, 7, 1, 100, 1000),
     };
@@ -593,9 +727,14 @@ fn test_submit_invalid_outcome_fails() {
 
     let result = client.try_submit_outcome(
         &registry_id,
-        &SignedOutcome { call_id: 8, outcome: 3, price: 100, timestamp: 1000,
+        &SignedOutcome {
+            call_id: 8,
+            outcome: 3,
+            price: 100,
+            timestamp: 1000,
             oracle_pubkey: oracle_pubkey.clone(),
-            signature: sign_outcome(&env, &oracle_secret, 8, 3, 100, 1000) },
+            signature: sign_outcome(&env, &oracle_secret, 8, 3, 100, 1000),
+        },
         &0u64,
     );
     assert_contract_error(result, OutcomeError::InvalidOutcome);
@@ -607,7 +746,10 @@ fn test_submit_outcome_after_settlement_fails() {
     let (_admin, registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
 
     let signed = SignedOutcome {
-        call_id: 9, outcome: 1, price: 100, timestamp: 1000,
+        call_id: 9,
+        outcome: 1,
+        price: 100,
+        timestamp: 1000,
         oracle_pubkey: oracle_pubkey.clone(),
         signature: sign_outcome(&env, &oracle_secret, 9, 1, 100, 1000),
     };
@@ -665,7 +807,6 @@ fn test_add_oracle_enforces_max_limit() {
     assert_contract_error(result, OutcomeError::MaxOraclesReached);
 }
 
-
 // ─── Fee Tests ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -714,7 +855,15 @@ fn test_batch_claim_payouts_three_stakers() {
 
     let staker_refs = [staker1.clone(), staker2.clone(), staker3.clone()];
     let stake_vals = [50_i128, 30_i128, 20_i128];
-    prepare_mock_batch_payout(&env, &registry_id, 1u64, &staker_refs, &stake_vals, 100, 100);
+    prepare_mock_batch_payout(
+        &env,
+        &registry_id,
+        1u64,
+        &staker_refs,
+        &stake_vals,
+        100,
+        100,
+    );
 
     let mut stakers = Vec::new(&env);
     stakers.push_back(staker1.clone());
@@ -745,7 +894,8 @@ fn test_batch_claim_panics_on_duplicate_staker() {
     stakes.push_back(50_i128);
 
     client.batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &50_i128, &50_i128);
-    let result = client.try_batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &50_i128, &50_i128);
+    let result =
+        client.try_batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &50_i128, &50_i128);
     assert_contract_error(result, OutcomeError::AlreadyClaimed);
 }
 
@@ -757,7 +907,14 @@ fn test_batch_claim_panics_on_empty_batch() {
     let stakers: Vec<Address> = Vec::new(&env);
     let stakes: Vec<i128> = Vec::new(&env);
 
-    let result = client.try_batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &100_i128, &100_i128);
+    let result = client.try_batch_claim_payouts(
+        &registry_id,
+        &1u64,
+        &stakers,
+        &stakes,
+        &100_i128,
+        &100_i128,
+    );
     assert_contract_error(result, OutcomeError::EmptyBatch);
 }
 
@@ -773,7 +930,8 @@ fn test_batch_claim_panics_on_length_mismatch() {
     let mut stakes = Vec::new(&env);
     stakes.push_back(50_i128);
 
-    let result = client.try_batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &100_i128, &50_i128);
+    let result =
+        client.try_batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &100_i128, &50_i128);
     assert_contract_error(result, OutcomeError::LengthMismatch);
 }
 
@@ -799,7 +957,10 @@ fn test_submit_outcome_fails_when_paused() {
     client.pause();
 
     let signed = SignedOutcome {
-        call_id: 1, outcome: 1, price: 100, timestamp: 1000,
+        call_id: 1,
+        outcome: 1,
+        price: 100,
+        timestamp: 1000,
         oracle_pubkey: oracle_pubkey.clone(),
         signature: sign_outcome(&env, &oracle_secret, 1, 1, 100, 1000),
     };
@@ -816,7 +977,14 @@ fn test_claim_payout_fails_when_paused() {
 
     client.pause();
 
-    let result = client.try_claim_payout(&registry_id, &1u64, &staker, &100_i128, &100_i128, &100_i128);
+    let result = client.try_claim_payout(
+        &registry_id,
+        &1u64,
+        &staker,
+        &100_i128,
+        &100_i128,
+        &100_i128,
+    );
     assert_contract_error(result, OutcomeError::ContractPaused);
 }
 
@@ -831,7 +999,14 @@ fn test_submission_within_window_succeeds() {
     let sig = sign_outcome(&env, &oracle_secret, call_id, 1, 100, 1500);
     client.submit_outcome(
         &registry_id,
-        &SignedOutcome { call_id, outcome: 1, price: 100, timestamp: 1500, oracle_pubkey, signature: sig },
+        &SignedOutcome {
+            call_id,
+            outcome: 1,
+            price: 100,
+            timestamp: 1500,
+            oracle_pubkey,
+            signature: sig,
+        },
         &1000u64,
     );
     assert_eq!(client.get_outcome(&call_id).outcome, 1u32);
@@ -848,7 +1023,14 @@ fn test_submission_outside_window_fails() {
     let sig = sign_outcome(&env, &oracle_secret, call_id, 1, 100, 1200);
     let result = client.try_submit_outcome(
         &registry_id,
-        &SignedOutcome { call_id, outcome: 1, price: 100, timestamp: 1200, oracle_pubkey, signature: sig },
+        &SignedOutcome {
+            call_id,
+            outcome: 1,
+            price: 100,
+            timestamp: 1200,
+            oracle_pubkey,
+            signature: sig,
+        },
         &1000u64,
     );
     assert_contract_error(result, OutcomeError::SubmissionWindowExpired);
@@ -861,11 +1043,79 @@ fn test_twap_three_equal_intervals() {
     let env = Env::default();
     let (_admin, _registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
     let call_id = 42u64;
+    let call_end_ts = 3000u64;
+    // Widen the window so observations from ts=1000 (2000s before end_ts)
+    // are accepted — this test is about the TWAP formula, not the window
+    // boundary (see test_submit_price_observation_rejects_outside_window).
+    client.set_twap_config(&2000u64, &3u32);
     for (price, ts) in [(100_i128, 1000u64), (200, 2000), (300, 3000)] {
         let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
-        client.submit_price_observation(&call_id, &PriceObservation { price, timestamp: ts }, &oracle_pubkey, &sig);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
     }
-    assert_eq!(client.compute_twap(&call_id), 150);
+    // end_ts == the last observation's own timestamp, so its tail segment
+    // contributes zero weight — same result as averaging only the gaps
+    // between consecutive observations: (100*1000 + 200*1000) / 2000 = 150.
+    assert_eq!(client.compute_twap(&call_id, &call_end_ts), 150);
+}
+
+#[test]
+fn test_twap_extends_last_price_to_end_ts() {
+    let env = Env::default();
+    let (_admin, _registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 43u64;
+    // Observations only span ts=1000..1400 within the 600s window
+    // [1000, 1600]; the last observation (300) never gets a "next"
+    // observation, so the TWAP must extend it forward to end_ts=1600 —
+    // without that extension this would (incorrectly) average to 150
+    // instead of 200.
+    for (price, ts) in [(100_i128, 1000u64), (200, 1200), (300, 1400)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &1600u64,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // (100*200 + 200*200 + 300*200) / 600 = (20000+40000+60000)/600 = 200.
+    assert_eq!(client.compute_twap(&call_id, &1600u64), 200);
+}
+
+#[test]
+fn test_twap_irregular_spacing() {
+    let env = Env::default();
+    let (_admin, _registry_id, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 45u64;
+    let call_end_ts = 1000u64;
+    // Uneven gaps: 100s, then 300s, then a 100s tail to end_ts.
+    for (price, ts) in [(200_i128, 500u64), (400, 600), (100, 900)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // (200*100 + 400*300 + 100*100) / 500 = (20000+120000+10000)/500 = 300.
+    assert_eq!(client.compute_twap(&call_id, &call_end_ts), 300);
 }
 
 #[test]
@@ -873,11 +1123,188 @@ fn test_twap_requires_minimum_3_observations() {
     let env = Env::default();
     let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
     let call_id = 44u64;
-    for (price, ts) in [(100_i128, 1000u64), (200, 2000)] {
+    // Within the default 600s window before end_ts=2000 (window starts at
+    // 1400) so submission itself succeeds — only the *count* is short.
+    for (price, ts) in [(100_i128, 1400u64), (200, 1500)] {
         let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
-        client.submit_price_observation(&call_id, &PriceObservation { price, timestamp: ts }, &oracle_pubkey, &sig);
+        client.submit_price_observation(
+            &call_id,
+            &2000u64,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
     }
-    let result = client.try_compute_twap(&call_id);
+    let result = client.try_compute_twap(&call_id, &2000u64);
+    assert_contract_error(result, OutcomeError::InsufficientPriceObservations);
+}
+
+#[test]
+fn test_twap_requires_half_window_span() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 46u64;
+    let call_end_ts = 10_000u64;
+    // Default window is 600s (min span 300s), but these 3 observations are
+    // clustered within 20s — plenty of *count*, not enough *span*.
+    for (price, ts) in [(100_i128, 9980u64), (200, 9990), (300, 10_000)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    let result = client.try_compute_twap(&call_id, &call_end_ts);
+    assert_contract_error(result, OutcomeError::InsufficientPriceObservations);
+}
+
+#[test]
+fn test_resolve_price_falls_back_to_single_point_when_insufficient() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 47u64;
+    let call_end_ts = 2000u64;
+    // Only 2 observations — not enough for a trusted TWAP. Within the
+    // default 600s window (starts at 1400) so submission itself succeeds.
+    for (price, ts) in [(100_i128, 1450u64), (200, 1500)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    let single_point_price = 999_i128;
+    assert_eq!(
+        client.resolve_price(&call_id, &call_end_ts, &single_point_price),
+        single_point_price
+    );
+}
+
+#[test]
+fn test_resolve_price_uses_twap_when_available() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 48u64;
+    let call_end_ts = 3000u64;
+    client.set_twap_config(&2000u64, &3u32);
+    for (price, ts) in [(100_i128, 1000u64), (200, 2000), (300, 3000)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // Falls back price is never used here — the TWAP (150) wins.
+    assert_eq!(client.resolve_price(&call_id, &call_end_ts, &999), 150);
+}
+
+#[test]
+fn test_submit_price_observation_rejects_outside_window() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 49u64;
+    // Default window is 600s; an observation 1000s before end_ts is outside it.
+    let call_end_ts = 10_000u64;
+    let ts = 9_000u64;
+    let sig = sign_observation(&env, &oracle_secret, call_id, 100, ts);
+    let result = client.try_submit_price_observation(
+        &call_id,
+        &call_end_ts,
+        &PriceObservation {
+            price: 100,
+            timestamp: ts,
+        },
+        &oracle_pubkey,
+        &sig,
+    );
+    assert_contract_error(result, OutcomeError::ObservationOutsideWindow);
+}
+
+#[test]
+fn test_set_twap_config_changes_window_and_min_observations() {
+    let env = Env::default();
+    let (admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    client.set_twap_config(&200u64, &2u32);
+    assert_eq!(client.get_twap_config(), (200u64, 2u32));
+
+    // With min_observations lowered to 2, 2 well-spaced observations now
+    // produce a valid TWAP instead of falling back. Window is [1100, 1300];
+    // span (100) meets the new half-window requirement (100) exactly.
+    let call_id = 50u64;
+    let call_end_ts = 1300u64;
+    for (price, ts) in [(100_i128, 1100u64), (300, 1200)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    // (100*100 + 300*100) / 200 = 200.
+    assert_eq!(client.compute_twap(&call_id, &call_end_ts), 200);
+    let _ = admin;
+}
+
+#[test]
+fn test_twap_overflow_prevention_large_window() {
+    let env = Env::default();
+    let (_admin, _reg, oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+    let call_id = 51u64;
+    // A large price and a very large time window shouldn't panic on
+    // overflow — try_compute_twap must reject gracefully via checked ops
+    // rather than trapping, and compute_twap surfaces that as a typed error
+    // rather than an unhandled overflow trap.
+    // i128::MAX/2 multiplied by even a ~1000-second gap vastly exceeds
+    // i128::MAX, so this overflows regardless of how wide the window is —
+    // widen it only enough that submission succeeds and the span check
+    // passes, so the overflow surfaces from compute_twap's own arithmetic
+    // (the actual thing under test), not from an unrelated rejection.
+    let huge_price = i128::MAX / 2;
+    let call_end_ts = 3000u64;
+    client.set_twap_config(&2000u64, &3u32);
+    for (price, ts) in [(huge_price, 1_000u64), (huge_price, 2_000), (huge_price, 3_000)] {
+        let sig = sign_observation(&env, &oracle_secret, call_id, price, ts);
+        client.submit_price_observation(
+            &call_id,
+            &call_end_ts,
+            &PriceObservation {
+                price,
+                timestamp: ts,
+            },
+            &oracle_pubkey,
+            &sig,
+        );
+    }
+    let result = client.try_compute_twap(&call_id, &call_end_ts);
+    // These inputs genuinely overflow i128 — `try_compute_twap`'s checked_*
+    // arithmetic must catch that and surface it as a graceful typed error
+    // (not an unhandled arithmetic panic/trap).
     assert_contract_error(result, OutcomeError::InsufficientPriceObservations);
 }
 
@@ -889,11 +1316,20 @@ fn test_claim_payout_stays_within_budget() {
     let (_, registry_id, client) = setup_with_fee(&env, 500);
     let staker = Address::generate(&env);
 
-    let usage = measure_budget(&env, CLAIM_PAYOUT_BUDGET_CPU, CLAIM_PAYOUT_BUDGET_MEM, || {
-        client.claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
-    });
+    let usage = measure_budget(
+        &env,
+        CLAIM_PAYOUT_BUDGET_CPU,
+        CLAIM_PAYOUT_BUDGET_MEM,
+        || {
+            client.claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
+        },
+    );
 
-    std::println!("outcome_manager::claim_payout cpu={} mem={}", usage.cpu, usage.mem);
+    std::println!(
+        "outcome_manager::claim_payout cpu={} mem={}",
+        usage.cpu,
+        usage.mem
+    );
     assert!(usage.cpu <= CLAIM_PAYOUT_BUDGET_CPU);
     assert!(usage.mem <= CLAIM_PAYOUT_BUDGET_MEM);
 }
@@ -910,11 +1346,27 @@ fn test_batch_claim_payouts_stays_within_budget() {
         stakes.push_back(5_i128);
     }
 
-    let usage = measure_budget(&env, BATCH_CLAIM_PAYOUTS_BUDGET_CPU, BATCH_CLAIM_PAYOUTS_BUDGET_MEM, || {
-        client.batch_claim_payouts(&registry_id, &1u64, &stakers, &stakes, &100_i128, &100_i128);
-    });
+    let usage = measure_budget(
+        &env,
+        BATCH_CLAIM_PAYOUTS_BUDGET_CPU,
+        BATCH_CLAIM_PAYOUTS_BUDGET_MEM,
+        || {
+            client.batch_claim_payouts(
+                &registry_id,
+                &1u64,
+                &stakers,
+                &stakes,
+                &100_i128,
+                &100_i128,
+            );
+        },
+    );
 
-    std::println!("outcome_manager::batch_claim_payouts cpu={} mem={}", usage.cpu, usage.mem);
+    std::println!(
+        "outcome_manager::batch_claim_payouts cpu={} mem={}",
+        usage.cpu,
+        usage.mem
+    );
     assert!(usage.cpu <= BATCH_CLAIM_PAYOUTS_BUDGET_CPU);
     assert!(usage.mem <= BATCH_CLAIM_PAYOUTS_BUDGET_MEM);
 }
@@ -925,17 +1377,30 @@ fn fuzz_claim_setup(staker_winning: i128, total_winning: i128, total_losing: i12
     let env = Env::default();
     let (_, registry_id, client) = setup_with_fee(&env, fee_bps);
     let staker = Address::generate(&env);
-    client.claim_payout(&registry_id, &1u64, &staker, &staker_winning, &total_winning, &total_losing);
+    client.claim_payout(
+        &registry_id,
+        &1u64,
+        &staker,
+        &staker_winning,
+        &total_winning,
+        &total_losing,
+    );
     assert!(client.has_claimed(&1u64, &staker));
 }
 
 #[test]
 fn test_fuzz_payout_many_ratios_no_panic() {
     let cases: &[(i128, i128, i128, u32)] = &[
-        (1, 1, 0, 0), (1, 1, 1, 0), (1, 1, 1, 1000), (1, 1, 1, 5000),
-        (1, 1_000, 1_000_000, 100), (500, 1_000, 1_000_000, 500),
-        (1_000, 1_000, 1, 0), (1_000_000, 1_000_000, 1_000_000, 1_000),
-        (1, 1, 1_000_000_000_000, 0), (1, 1_000_000_000_000, 1_000_000_000_000, 0),
+        (1, 1, 0, 0),
+        (1, 1, 1, 0),
+        (1, 1, 1, 1000),
+        (1, 1, 1, 5000),
+        (1, 1_000, 1_000_000, 100),
+        (500, 1_000, 1_000_000, 500),
+        (1_000, 1_000, 1, 0),
+        (1_000_000, 1_000_000, 1_000_000, 1_000),
+        (1, 1, 1_000_000_000_000, 0),
+        (1, 1_000_000_000_000, 1_000_000_000_000, 0),
         (500, 1_000, 1_000, 5_000),
     ];
     for &(sw, tw, tl, fee) in cases {
@@ -978,3 +1443,319 @@ fn test_om_version_returns_contract_version() {
     let (_admin, _registry_id, _secret, _pubkey, client) = setup_single_oracle(&env);
     assert_eq!(client.version(), 1u32);
 }
+
+// --- Oracle Rotation Tests ---------------------------------------------------
+
+#[test]
+fn test_schedule_oracle_removal_stores_correctly() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    // Oracle is active before any removal is scheduled
+    assert!(client.is_oracle_active(&oracle_pubkey));
+
+    // Schedule removal at ledger 10; current sequence is 0
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    // Still active because effective_ledger has not been reached
+    assert!(client.is_oracle_active(&oracle_pubkey));
+}
+
+#[test]
+fn test_is_oracle_active_false_after_effective_ledger() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    // Advance past the effective ledger
+    env.ledger().with_mut(|li| { li.sequence_number = 10; });
+
+    assert!(!client.is_oracle_active(&oracle_pubkey));
+}
+
+#[test]
+fn test_execute_oracle_removal_succeeds_after_grace_period() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    env.ledger().with_mut(|li| { li.sequence_number = 10; });
+    client.execute_oracle_removal(&oracle_pubkey);
+
+    // Oracle must be gone from the active oracle set
+    assert!(!client.is_oracle(&oracle_pubkey));
+}
+
+#[test]
+fn test_execute_oracle_removal_fails_before_grace_period() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    // Sequence is still 0, grace period has not elapsed
+    let result = client.try_execute_oracle_removal(&oracle_pubkey);
+    assert!(result.is_err(), "premature execution must fail");
+}
+
+#[test]
+fn test_rotation_keys_do_not_collide_with_admin_or_quorum() {
+    let env = Env::default();
+    let (_admin, _registry_id, _oracle_secret, oracle_pubkey, client) = setup_single_oracle(&env);
+
+    let quorum_before = client.get_quorum();
+
+    client.schedule_oracle_removal(&oracle_pubkey, &10u32);
+
+    env.ledger().with_mut(|li| { li.sequence_number = 10; });
+    client.execute_oracle_removal(&oracle_pubkey);
+
+    // Quorum must be unchanged after rotation
+    assert_eq!(client.get_quorum(), quorum_before, "quorum collided with rotation storage");
+
+    // Admin functions must still work, proving Admin key is intact
+    let (_, extra_pubkey) = gen_keypair(&env);
+    client.add_oracle(&extra_pubkey);
+    assert!(client.is_oracle(&extra_pubkey), "admin key corrupted by rotation");
+}
+
+// ─── Social Recovery Tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_set_and_get_recovery_address() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_fee(&env, 0);
+    let user = Address::generate(&env);
+    let recovery = Address::generate(&env);
+
+    assert!(client.get_recovery_address(&user).is_none());
+
+    client.set_recovery_address(&user, &recovery);
+    assert_eq!(client.get_recovery_address(&user), Some(recovery));
+}
+
+#[test]
+fn test_remove_recovery_address() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_fee(&env, 0);
+    let user = Address::generate(&env);
+    let recovery = Address::generate(&env);
+
+    client.set_recovery_address(&user, &recovery);
+    assert!(client.get_recovery_address(&user).is_some());
+
+    client.remove_recovery_address(&user);
+    assert!(client.get_recovery_address(&user).is_none());
+}
+
+#[test]
+fn test_default_recovery_grace_period_is_30_days() {
+    let env = Env::default();
+    let (_, _, client) = setup_with_fee(&env, 0);
+    assert_eq!(client.get_recovery_grace_period(), 30 * 24 * 60 * 60);
+}
+
+/// The original winner is never blocked by a recovery address: they can
+/// claim at any time, including before the grace period would even allow
+/// the recovery agent to act. Once claimed, the recovery agent can no
+/// longer claim on their behalf (same `Claimed` flag).
+#[test]
+fn test_original_winner_claims_before_recovery_agent() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    // Winner claims immediately -- no need to wait for the grace period.
+    client.claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
+    assert!(client.has_claimed(&1u64, &staker));
+
+    // Recovery agent can no longer claim -- already claimed by the winner.
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::AlreadyClaimed);
+}
+
+#[test]
+fn test_claim_on_behalf_fails_one_second_before_grace_period() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period - 1;
+    });
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::RecoveryGracePeriodNotElapsed);
+}
+
+#[test]
+fn test_claim_on_behalf_succeeds_exactly_at_grace_period() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    client.claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+
+    assert!(client.has_claimed(&1u64, &staker));
+
+    // Original winner can no longer claim afterward -- same `Claimed` flag.
+    let result =
+        client.try_claim_payout(&registry_id, &1u64, &staker, &100i128, &100i128, &100i128);
+    assert_contract_error(result, OutcomeError::AlreadyClaimed);
+}
+
+#[test]
+fn test_claim_on_behalf_fails_for_non_recovery_agent() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &impostor,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::NotRecoveryAgent);
+}
+
+#[test]
+fn test_claim_on_behalf_fails_when_no_recovery_address_set() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let someone = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &someone,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::NotRecoveryAgent);
+}
+
+#[test]
+fn test_set_recovery_grace_period_changes_default() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_grace_period(&100u64);
+    assert_eq!(client.get_recovery_grace_period(), 100u64);
+
+    client.set_recovery_address(&staker, &recovery_agent);
+
+    // Would fail against the (unused) 30-day default, but the custom
+    // 100s period has elapsed.
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + 100;
+    });
+
+    client.claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert!(client.has_claimed(&1u64, &staker));
+}
+
+#[test]
+fn test_claim_on_behalf_fails_when_paused() {
+    let env = Env::default();
+    let (_, registry_id, client) = setup_with_fee(&env, 0);
+    let staker = Address::generate(&env);
+    let recovery_agent = Address::generate(&env);
+    let settled_at = env.ledger().timestamp();
+
+    client.set_recovery_address(&staker, &recovery_agent);
+    let grace_period = client.get_recovery_grace_period();
+    env.ledger().with_mut(|li| {
+        li.timestamp = settled_at + grace_period;
+    });
+
+    client.pause();
+
+    let result = client.try_claim_on_behalf(
+        &registry_id,
+        &1u64,
+        &recovery_agent,
+        &staker,
+        &100i128,
+        &100i128,
+        &100i128,
+    );
+    assert_contract_error(result, OutcomeError::ContractPaused);
+}
+

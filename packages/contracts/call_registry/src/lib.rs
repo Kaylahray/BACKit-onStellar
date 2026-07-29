@@ -74,22 +74,35 @@ fn transfer_token(env: &Env, stake_token: &Address, from: &Address, to: &Address
 }
 
 mod admin;
+mod duration;
 mod errors;
 mod events;
+mod withdrawal;
 #[cfg(test)]
 mod fuzz_tests;
+mod governance;
+mod reputation;
 mod sep10;
 mod shares;
 mod storage;
 #[cfg(test)]
 mod test;
-mod types;
+pub mod types;
 
 use backit_shared::{OUTCOME_DOWN, OUTCOME_UP};
 use errors::CallRegistryError;
 use events::*;
 use storage::*;
 use types::*;
+
+macro_rules! reentrancy_guard {
+    ($env:expr) => {
+        if storage::is_locked($env) {
+            return Err(CallRegistryError::ReentrancyDetected);
+        }
+        storage::acquire_lock($env);
+    };
+}
 
 const MAX_CALL_PAGE_SIZE: u32 = 20;
 const MAX_CALL_STAKERS_PAGE_SIZE: u32 = 50;
@@ -161,6 +174,10 @@ impl CallRegistry {
             staking_cutoff_secs: 300,
             share_wasm_hash: None,
             resolution_grace_period: 604800,
+            admin_set: Vec::new(&env),
+            admin_threshold: 1,
+            base_stake_limit: 0,
+            reputation_multiplier: 0,
         };
 
         set_config(&env, &config);
@@ -178,7 +195,6 @@ impl CallRegistry {
     }
 
     /// Test-only: register the XLM SAC address so is_native_xlm works in tests.
-    #[cfg(test)]
     pub fn set_xlm_sac_address(env: Env, xlm_sac: Address) {
         env.storage()
             .instance()
@@ -209,6 +225,7 @@ impl CallRegistry {
         args: CallInitArgs,
     ) -> Result<Call, CallRegistryError> {
         creator.require_auth();
+        reentrancy_guard!(&env);
 
         let CallInitArgs {
             stake_token,
@@ -241,6 +258,7 @@ impl CallRegistry {
         if end_ts <= current_timestamp {
             return Err(CallRegistryError::InvalidEndTime);
         }
+        duration::assert_duration_within_limit(&env, end_ts);
 
         let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
         // Native XLM (sentinel address) is always allowed; SAC tokens must be whitelisted.
@@ -421,6 +439,7 @@ impl CallRegistry {
         env.storage().persistent().set(&key_cid, &cid_b64);
         env.storage().persistent().set(&key_hash, &hash_b64);
 
+        storage::release_lock(&env);
         Ok(call)
     }
 
@@ -474,7 +493,7 @@ impl CallRegistry {
         emit_call_metadata_updated(
             &env,
             call_id,
-            &creator,
+        &creator,
             &old_hash,
             &new_metadata_hash,
             call.metadata_version,
@@ -537,6 +556,7 @@ impl CallRegistry {
         position: u32,
     ) -> Result<Call, CallRegistryError> {
         staker.require_auth();
+        reentrancy_guard!(&env);
 
         if amount <= 0 {
             return Err(CallRegistryError::InvalidStakeAmount);
@@ -583,9 +603,24 @@ impl CallRegistry {
         let current_staker_stake = outcome_stakers.get(staker_key.clone()).unwrap_or(0);
         let updated_staker_stake = current_staker_stake + amount;
 
-        // Per-user stake cap
-        if config.max_stake_per_user > 0 && updated_staker_stake > config.max_stake_per_user {
-            panic!("Stake exceeds max_stake_per_user cap");
+        // Reputation-weighted individual stake cap (per call, per position).
+        // Replaces the old flat `max_stake_per_user`-only check: the user's
+        // personal limit now scales with their on-chain prediction accuracy
+        // and historical stake volume (see `reputation` module), while
+        // `max_stake_per_user`, if configured, still acts as an absolute
+        // outer ceiling on top of it.
+        let staker_stats = get_creator_stats(&env, &staker);
+        let staker_volume = get_user_total_stake_volume(&env, &staker);
+        let effective_limit = reputation::effective_stake_limit(
+            &env,
+            config.base_stake_limit,
+            config.reputation_multiplier,
+            config.max_stake_per_user,
+            &staker_stats,
+            staker_volume,
+        );
+        if updated_staker_stake > effective_limit {
+            panic!("Stake exceeds reputation-weighted stake limit");
         }
 
         // Transfer tokens in — supports both native XLM and SAC-wrapped tokens.
@@ -615,6 +650,7 @@ impl CallRegistry {
         set_call(&env, &call);
         add_staker_call(&env, &staker, call_id);
         record_stake(&env, &staker, amount);
+        record_user_stake_volume(&env, &staker, amount);
         extend_storage_ttl(&env);
 
         // Emit distinct XLM event so the indexer can differentiate XLM from USDC volume.
@@ -624,6 +660,7 @@ impl CallRegistry {
             emit_stake_added(&env, call_id, &staker, amount, position);
         }
 
+        storage::release_lock(&env);
         Ok(call)
     }
 
@@ -737,8 +774,37 @@ impl CallRegistry {
 
     /// Set the maximum individual stake per user per position per call (admin only).
     /// Pass `0` to remove the cap.
+    ///
+    /// This remains a separate, absolute ceiling on top of the
+    /// reputation-weighted personal limit — see `set_reputation_params` and
+    /// the `reputation` module doc comment for how the two combine.
     pub fn set_max_stake_per_user(env: Env, new_max: i128) {
         admin::set_max_stake_per_user(env, new_max);
+    }
+
+    /// Set reputation-weighted staking-limit parameters (admin only).
+    ///
+    /// * `base_limit` — the personal stake ceiling (per call, per position)
+    ///   for brand-new users, and the baseline the reputation multiplier
+    ///   scales from. Pass `0` to disable the reputation-weighted system
+    ///   entirely (only `max_stake_per_user`, if any, will apply).
+    /// * `multiplier` — reputation multiplier in basis points (`10_000` ==
+    ///   `1.0`). See the `reputation` module for the exact fixed-point
+    ///   formula.
+    ///
+    /// # Panics
+    /// * Contract not initialized.
+    /// * `base_limit` is negative.
+    pub fn set_reputation_params(env: Env, base_limit: i128, multiplier: u32) {
+        reputation::set_reputation_params(env, base_limit, multiplier);
+    }
+
+    /// View: the reputation-weighted individual stake limit (per call, per
+    /// position) currently enforced for `user` in `stake_on_call`, after
+    /// combining the reputation formula with `max_stake_per_user` (if
+    /// configured). Returns `i128::MAX` when no cap applies at all.
+    pub fn get_user_stake_limit(env: Env, user: Address) -> i128 {
+        reputation::get_user_stake_limit(&env, &user)
     }
 
     /// Set the minimum stake required per staking action (admin only).
@@ -765,6 +831,17 @@ impl CallRegistry {
         admin::set_staking_cutoff(env, new_cutoff);
     }
 
+    /// Set the maximum allowed call duration in seconds (admin only).
+    /// Defaults to 30 days (2_592_000 s). Emits AdminParamsChanged.
+    pub fn set_max_duration(env: Env, admin: Address, max_duration_secs: u64) {
+        duration::set_max_duration(&env, admin, max_duration_secs);
+    }
+
+    /// Get the current maximum allowed call duration in seconds.
+    pub fn get_max_duration(env: Env) -> u64 {
+        duration::get_max_duration(&env)
+    }
+
     /// Resolve a call with an outcome (outcome_manager only).
     /// # Errors
     /// * [`CallRegistryError::NotInitialized`] – contract not initialised.
@@ -780,6 +857,7 @@ impl CallRegistry {
         let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
         assert!(!config.paused, "Contract is paused");
         config.outcome_manager.require_auth();
+        reentrancy_guard!(&env);
 
         let mut call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
 
@@ -802,6 +880,7 @@ impl CallRegistry {
 
         // Track creator reputation: increment total_resolved and conditionally total_correct
         let mut creator_stats = get_creator_stats(&env, &call.creator);
+        let old_creator_stats = creator_stats.clone();
         creator_stats.total_resolved += 1;
 
         // Check if creator staked on the winning position
@@ -817,11 +896,26 @@ impl CallRegistry {
 
         set_creator_stats(&env, &call.creator, &creator_stats);
 
+        // Reputation stats just changed — recompute the creator's
+        // reputation-weighted stake limit and emit `StakeLimitUpdated` if it
+        // actually moved (e.g. crossing the "proven user" resolved-call
+        // threshold, or accuracy shifting enough to change the limit).
+        let creator_volume = get_user_total_stake_volume(&env, &call.creator);
+        reputation::maybe_emit_stake_limit_updated(
+            &env,
+            &call.creator,
+            &config,
+            &old_creator_stats,
+            &creator_stats,
+            creator_volume,
+        );
+
         set_call(&env, &call);
         extend_storage_ttl(&env);
 
         emit_call_resolved(&env, call_id, outcome, end_price);
 
+        storage::release_lock(&env);
         Ok(call)
     }
 
@@ -885,6 +979,93 @@ impl CallRegistry {
         admin::set_admin(env, new_admin)
     }
 
+    /// Configure multi-party admin set and threshold (requires current admin signature).
+    /// Threshold=1 is backward-compatible single-admin behavior. Max 10 admins.
+    /// Emits AdminSetUpdated event.
+    pub fn set_admin_set(
+        env: Env,
+        new_admins: Vec<Address>,
+        new_threshold: u32,
+    ) -> Result<(), CallRegistryError> {
+        let mut config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        // Require existing admin (or threshold signatures in future iterations)
+        config.admin.require_auth();
+        if new_threshold == 0 || new_threshold as usize > new_admins.len() as usize {
+            panic!("threshold must be >= 1 and <= admin_set length");
+        }
+        config.admin_set = new_admins.clone();
+        config.admin_threshold = new_threshold;
+        set_config(&env, &config);
+        env.events().publish(
+            ("call_registry", "AdminSetUpdated"),
+            (new_admins, new_threshold),
+        );
+        Ok(())
+    }
+
+    /// Return the current admin set and threshold.
+    pub fn get_admin_set(env: Env) -> Result<(Vec<Address>, u32), CallRegistryError> {
+        let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        Ok((config.admin_set, config.admin_threshold))
+    }
+
+    // ── On-Chain Governance ──────────────────────────────────────────────────
+
+    /// Create a governance proposal to change a contract parameter.
+    /// Proposer must have at least `proposal_threshold` total stake volume.
+    pub fn propose_change(
+        env: Env,
+        proposer: Address,
+        parameter: Symbol,
+        new_value_bytes: soroban_sdk::Bytes,
+        voting_end_ledger: u32,
+        proposer_stake_volume: i128,
+    ) -> u64 {
+        governance::propose_change(
+            &env,
+            proposer,
+            parameter,
+            new_value_bytes,
+            voting_end_ledger,
+            proposer_stake_volume,
+        )
+    }
+
+    /// Cast a vote on a governance proposal. Voting power = voter's stake volume.
+    pub fn governance_vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u64,
+        support: bool,
+        voter_stake_volume: i128,
+    ) {
+        governance::vote(&env, voter, proposal_id, support, voter_stake_volume)
+    }
+
+    /// Execute a passed proposal after the voting period ends.
+    pub fn execute_proposal(env: Env, proposal_id: u64, total_platform_stake: i128) {
+        governance::execute_proposal(&env, proposal_id, total_platform_stake);
+    }
+
+    /// Get a specific proposal by ID.
+    pub fn get_proposal(env: Env, proposal_id: u64) -> governance::GovernanceProposal {
+        governance::get_proposal(&env, proposal_id)
+    }
+
+    /// Get all currently active (open) proposals.
+    pub fn get_active_proposals(env: Env) -> Vec<governance::GovernanceProposal> {
+        governance::get_active_proposals(&env)
+    }
+
+    /// Update governance configuration (admin only).
+    pub fn set_governance_config(
+        env: Env,
+        cfg: governance::GovernanceConfig,
+    ) -> Result<(), CallRegistryError> {
+        let config = get_config(&env).ok_or(CallRegistryError::NotInitialized)?;
+        governance::set_governance_config(&env, &config.admin, cfg);
+        Ok(())
+    }
     /// Replace the outcome manager (admin only).
     /// # Errors
     /// Propagates errors from [`admin::set_outcome_manager`].
@@ -1216,6 +1397,69 @@ impl CallRegistry {
         Ok(())
     }
 
+    /// Cancel a call before any third-party stakes have been placed (creator only).
+    ///
+    /// Refunds the creator's escrowed `stake_amount` and marks the call as cancelled.
+    ///
+    /// # Errors
+    /// * [`CallRegistryError::CallNotFound`] -- `call_id` does not exist.
+    ///
+    /// # Panics
+    /// * If the caller is not the call creator.
+    /// * If any outcome has been staked on by a third party.
+    /// * If the call is already settled or cancelled.
+    pub fn cancel_call(
+        env: Env,
+        creator: Address,
+        call_id: u64,
+    ) -> Result<(), CallRegistryError> {
+        creator.require_auth();
+        reentrancy_guard!(&env);
+
+        let mut call = get_call(&env, call_id).ok_or(CallRegistryError::CallNotFound)?;
+
+        if call.creator != creator {
+            panic!("not the call creator");
+        }
+        if call.settled {
+            panic!("call is already settled");
+        }
+        if call.cancelled {
+            panic!("call is already cancelled");
+        }
+
+        // Reject if any third-party stake has been placed on any outcome.
+        let total_staked: i128 = (1..=call.outcome_count)
+            .map(|i| call.outcome_stakes.get(i).unwrap_or(0))
+            .sum();
+        if total_staked > 0 {
+            panic!("cannot cancel call with active stakes");
+        }
+
+        let stake_amount = call.stake_amount;
+        call.cancelled = true;
+        set_call(&env, &call);
+        extend_storage_ttl(&env);
+
+        // Refund the creator's escrowed stake.
+        transfer_token(
+            &env,
+            &call.stake_token,
+            &env.current_contract_address(),
+            &creator,
+            stake_amount,
+        );
+
+        if is_native_xlm(&env, &call.stake_token) {
+            emit_xlm_call_cancelled(&env, call_id, &creator, stake_amount);
+        } else {
+            emit_call_cancelled(&env, call_id, &creator, stake_amount);
+        }
+
+        storage::release_lock(&env);
+        Ok(())
+    }
+
     /// Void a call (admin only). Can be called at any time.
     /// Once voided, no new stakes or resolutions are accepted.
     /// Emits CallVoided.
@@ -1414,5 +1658,33 @@ impl CallRegistry {
     /// Returns `None` if the user has never called `link_sep10_domain`.
     pub fn get_sep10_home_domain(env: Env, user: Address) -> Option<Bytes> {
         get_sep10_domain(&env, &user)
+    }
+
+    /// Withdraw stake early before a call ends, forfeiting a 10% penalty to the pool.
+    ///
+    /// - Panics if the call has ended, is settled, cancelled, or voided.
+    /// - Panics if the staker has no stake on `position`.
+    /// - Refunds `stake - penalty` to the staker; penalty remains in the pool.
+    /// - Emits `StakeWithdrawn` (or `xlm_stake_withdrawn` for native XLM).
+    ///
+    /// # Arguments
+    /// * `staker`   -- address withdrawing their stake (must sign).
+    /// * `call_id`  -- the call to withdraw from.
+    /// * `position` -- outcome position (1..=outcome_count).
+    pub fn withdraw_stake(
+        env: Env,
+        staker: Address,
+        call_id: u64,
+        position: u32,
+    ) -> (i128, i128) {
+        let config = get_config(&env).expect("not initialized");
+        assert!(!config.paused, "Contract is paused");
+        if storage::is_locked(&env) {
+            panic!("reentrancy detected");
+        }
+        storage::acquire_lock(&env);
+        let result = withdrawal::execute_withdrawal(&env, staker, call_id, position);
+        storage::release_lock(&env);
+        result
     }
 }

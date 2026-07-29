@@ -36,4 +36,20 @@ pub enum CallRegistryError {
     StakingCutoffActive = 15,
     /// The SEP-10 token's `valid_until` ledger sequence has passed.
     Sep10TokenExpired = 16,
+    /// Re-entrant call detected on a guarded function.
+    ReentrancyDetected = 17,
+    /// A checked arithmetic operation (multiplication, division, addition, or
+    /// subtraction) would have overflowed/underflowed or divided by zero.
+    /// Raised by the reputation-weighted stake-limit calculations and any
+    /// other checked-math call sites in this crate.
+    Overflow = 18,
+}
+
+/// Panics with [`CallRegistryError::Overflow`]. Shared helper for checked
+/// arithmetic call sites across the crate (mirrors the equivalent
+/// `overflow<T>` helper used in the `outcome_manager` crate for the same
+/// purpose, so both contracts fail the same deterministic way on overflow
+/// instead of relying on raw wrapping/panicking arithmetic operators).
+pub fn overflow<T>(env: &soroban_sdk::Env) -> T {
+    soroban_sdk::panic_with_error!(env, CallRegistryError::Overflow);
 }
