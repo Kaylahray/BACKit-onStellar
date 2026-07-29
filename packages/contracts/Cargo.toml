@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "call_registry",
   "contracts/hello-world",
+  "dutch_auction",
   "gas_station",
   "index_fund",
   "launchpad",
