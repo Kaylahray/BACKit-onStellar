@@ -30,9 +30,6 @@ import { LoggerModule } from './common/logger/logger.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { StakesModule } from './stakes/stakes.module';
 
-import { RelayModule } from './relay/relay.module';
-import { AppThrottlerModule } from './throttler/throttler.module';
-
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
@@ -67,12 +64,10 @@ import { AppThrottlerModule } from './throttler/throttler.module';
     BookmarksModule,
     AuthModule,
     RelayModule,
-    AppThrottlerModule,
     OracleSigningModule,
     GatewaysModule,
     AuditModule,
     ActivityModule,
-    RelayModule,
     FirewallModule,
     LeaderboardModule,
     CommentsModule,
@@ -87,3 +82,4 @@ export class AppModule implements NestModule {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
   }
 }
+

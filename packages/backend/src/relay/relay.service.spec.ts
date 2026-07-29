@@ -732,6 +732,8 @@ describe('RelayService', () => {
         'Your balance is 50 USDC but the stake requires 100 USDC.',
       );
     });
+  });
+
   it('estimateFee rejects invalid XDR', async () => {
     const { TransactionBuilder } = await import('@stellar/stellar-sdk');
     (TransactionBuilder.fromXDR as any).mockImplementationOnce(() => {
@@ -743,6 +745,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       { simulateTransaction: jest.fn() } as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     await expect(
@@ -772,6 +775,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       rpcServer as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     const origFetch = global.fetch;
@@ -803,6 +807,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       rpcServer as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     const origFetch = global.fetch;
@@ -835,6 +840,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       rpcServer as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     const origFetch = global.fetch;
@@ -859,6 +865,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     const result = await (service as any).estimateFee('valid-xdr');
@@ -875,6 +882,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     (service as any).xlmPriceCache = {
@@ -906,6 +914,7 @@ describe('RelayService', () => {
         getSettings: jest.fn().mockResolvedValue({ contractId: 'ALLOWED' }),
       } as any,
       { simulateTransaction: jest.fn().mockResolvedValue({}) } as any,
+      { get: jest.fn(), set: jest.fn() } as any,
     );
 
     const result = await (service as any).estimateFee('valid-xdr');
