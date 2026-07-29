@@ -16,11 +16,15 @@ import { CorrelationIdMiddleware } from './common/middleware/correlation-id.midd
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { LoggerModule } from './common/logger/logger.module';
 
+import { RelayModule } from './relay/relay.module';
+import { AppThrottlerModule } from './throttler/throttler.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     CacheModule.register({ isGlobal: true }),
     LoggerModule,
+    AppThrottlerModule,
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DB_HOST || process.env.POSTGRES_HOST || 'localhost',
@@ -45,6 +49,7 @@ import { LoggerModule } from './common/logger/logger.module';
     SearchModule,
     UsersModule,
     AuthModule,
+    RelayModule,
   ],
   controllers: [],
   providers: [{ provide: APP_INTERCEPTOR, useClass: LoggingInterceptor }],
