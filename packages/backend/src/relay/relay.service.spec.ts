@@ -725,9 +725,127 @@ describe('RelayService', () => {
       const result = await service.simulate({ xdr: 'fail_xdr' });
 
       expect(result.will_succeed).toBe(false);
+      expect(result.will_succeed).toBe(false);
       expect(result.error_message).toBe(
         'Your balance is 50 USDC but the stake requires 100 USDC.',
       );
+    });
+
+    it('handles market ended, settled, cancelled, cutoff and default error messages', async () => {
+      const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+      const testCases = [
+        { err: 'Market has expired', expected: 'Market has ended' },
+        { err: 'Call is already settled', expected: 'Market is already settled' },
+        { err: 'Market cancelled by admin', expected: 'Market has been cancelled' },
+        { err: 'Staking cutoff passed', expected: 'Staking cutoff period active' },
+        { err: 'Unknown internal error', expected: 'Unknown internal error' },
+      ];
+
+      for (const tc of testCases) {
+        mockCacheManager.get.mockResolvedValueOnce(null);
+        (TransactionBuilder.fromXDR as any).mockReturnValueOnce({
+          source: 'G_USER',
+          operations: [],
+        });
+        const rpcServer = {
+          simulateTransaction: jest.fn().mockResolvedValue({ error: tc.err }),
+        };
+        const service = new RelayService(
+          {} as any,
+          rpcServer as any,
+          mockCacheManager as any,
+        );
+        const result = await service.simulate({ xdr: 'test_xdr' });
+        expect(result.will_succeed).toBe(false);
+        expect(result.error_message).toBe(tc.expected);
+      }
+    });
+
+    it('handles simulation rpc rejection and cache set failure', async () => {
+      mockCacheManager.get.mockResolvedValueOnce(null);
+      mockCacheManager.set.mockRejectedValueOnce(new Error('cache error'));
+      const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+
+      (TransactionBuilder.fromXDR as any).mockReturnValueOnce({
+        source: 'G_STAKER',
+        operations: [],
+      });
+
+      const rpcServer = {
+        simulateTransaction: jest.fn().mockRejectedValue(new Error('rpc failure')),
+      };
+
+      const service = new RelayService(
+        {} as any,
+        rpcServer as any,
+        mockCacheManager as any,
+      );
+
+      const result = await service.simulate({ xdr: 'err_xdr' });
+      expect(result.will_succeed).toBe(false);
+      expect(result.error_message).toBe('rpc failure');
+    });
+
+    it('simulates DOWN position stake_on_call', async () => {
+      mockCacheManager.get.mockResolvedValueOnce(null);
+      const { TransactionBuilder, xdr } = await import('@stellar/stellar-sdk');
+
+      (TransactionBuilder.fromXDR as any).mockReturnValueOnce({
+        source: 'G_STAKER',
+        operations: [
+          {
+            type: 'invokeHostFunction',
+            source: 'G_STAKER',
+            func: {
+              invokeContract: () => ({
+                contractAddress: () => ({
+                  contractId: () => Buffer.alloc(32),
+                }),
+                functionName: () => 'stake_on_call',
+                args: () => [
+                  'G_STAKER',
+                  1n,
+                  xdr.ScVal.scvI128(new xdr.Int128Parts({ lo: xdr.Uint64.fromString('500000000'), hi: xdr.Int64.fromString('0') })),
+                  xdr.ScVal.scvU32(2),
+                ],
+              }),
+            },
+          },
+        ],
+      });
+
+      const rpcServer = {
+        simulateTransaction: jest.fn().mockResolvedValue({
+          minResourceFee: '1000',
+        }),
+      };
+
+      const service = new RelayService(
+        {} as any,
+        rpcServer as any,
+        mockCacheManager as any,
+      );
+
+      const result = await service.simulate({ xdr: 'down_xdr' });
+      expect(result.action).toBe('stake_on_call');
+      expect(result.new_pool_ratios.down_bps).toBeGreaterThan(5000);
+    });
+
+    it('throws BadRequestException on missing or invalid XDR in simulate', async () => {
+      const service = new RelayService(
+        {} as any,
+        {} as any,
+        mockCacheManager as any,
+      );
+
+      await expect(service.simulate({ xdr: '' })).rejects.toThrow(BadRequestException);
+
+      const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+      (TransactionBuilder.fromXDR as any).mockImplementationOnce(() => {
+        throw new Error('invalid xdr format');
+      });
+
+      await expect(service.simulate({ xdr: 'invalid' })).rejects.toThrow(BadRequestException);
     });
   });
 
