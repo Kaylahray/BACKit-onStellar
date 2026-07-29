@@ -1,4 +1,4 @@
-use crate::types::FactoryConfig;
+use crate::types::{FactoryConfig, Swarm};
 use soroban_sdk::{contracttype, Address, Env, Vec};
 
 #[contracttype]
