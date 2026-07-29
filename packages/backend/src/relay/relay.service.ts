@@ -1,4 +1,9 @@
-import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  Inject,
+} from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import {
@@ -14,7 +19,11 @@ import {
 } from '@stellar/stellar-sdk';
 import { ConfigService } from '../config/config.service';
 import { SimulateTxDto } from './dto/simulate-tx.dto';
-import { SimulationResultDto, TokenTransferDto, PoolRatiosDto } from './dto/simulation-result.dto';
+import {
+  SimulationResultDto,
+  TokenTransferDto,
+  PoolRatiosDto,
+} from './dto/simulation-result.dto';
 
 @Injectable()
 export class RelayService {
@@ -329,7 +338,9 @@ export class RelayService {
             }
           }
         } catch (e) {
-          this.logger.warn(`Failed to parse operation details from XDR: ${e.message}`);
+          this.logger.warn(
+            `Failed to parse operation details from XDR: ${e.message}`,
+          );
         }
       }
       if (op.source) {
@@ -392,9 +403,15 @@ export class RelayService {
 
     // Determine action name
     let action = functionCalled;
-    if (functionCalled === 'redeem_shares' || functionCalled === 'withdraw_payout') {
+    if (
+      functionCalled === 'redeem_shares' ||
+      functionCalled === 'withdraw_payout'
+    ) {
       action = 'claim_payout';
-    } else if (functionCalled === 'claim_void_refund' || functionCalled === 'claim_expired_refund') {
+    } else if (
+      functionCalled === 'claim_void_refund' ||
+      functionCalled === 'claim_expired_refund'
+    ) {
       action = 'withdraw_stake';
     }
 
@@ -443,9 +460,10 @@ export class RelayService {
         }
       }
 
-      const humanAmount = Number(stakeAmount) >= 10_000_000
-        ? (Number(stakeAmount) / 10_000_000).toFixed(2)
-        : Number(stakeAmount).toString();
+      const humanAmount =
+        Number(stakeAmount) >= 10_000_000
+          ? (Number(stakeAmount) / 10_000_000).toFixed(2)
+          : Number(stakeAmount).toString();
 
       token_transfers = [
         {
@@ -551,4 +569,3 @@ export class RelayService {
     return result;
   }
 }
-

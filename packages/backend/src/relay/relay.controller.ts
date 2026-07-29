@@ -66,7 +66,8 @@ export class RelayController {
     },
   })
   @ApiOperation({
-    summary: 'Simulate a Soroban transaction and return a human-readable breakdown',
+    summary:
+      'Simulate a Soroban transaction and return a human-readable breakdown',
   })
   @ApiResponse({
     status: 201,
@@ -84,4 +85,3 @@ export class RelayController {
     return this.relayService.simulate(dto);
   }
 }
-

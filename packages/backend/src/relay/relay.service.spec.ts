@@ -456,7 +456,9 @@ describe('RelayService', () => {
       );
 
       const result = await service.simulate({ xdr: 'valid_xdr' });
-      expect(mockCacheManager.get).toHaveBeenCalledWith('relay:simulate:valid_xdr');
+      expect(mockCacheManager.get).toHaveBeenCalledWith(
+        'relay:simulate:valid_xdr',
+      );
       expect(result).toEqual(cachedResult);
     });
 
@@ -531,12 +533,7 @@ describe('RelayService', () => {
                   contractId: () => Buffer.alloc(32),
                 }),
                 functionName: () => 'stake_on_call',
-                args: () => [
-                  'G_STAKER',
-                  1n,
-                  1000000000n,
-                  1,
-                ],
+                args: () => ['G_STAKER', 1n, 1000000000n, 1],
               }),
             },
           },
@@ -922,4 +919,3 @@ describe('RelayService', () => {
     global.fetch = origFetch;
   });
 });
-

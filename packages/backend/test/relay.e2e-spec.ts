@@ -24,7 +24,11 @@ describe('RelayController (e2e)', () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [CacheModule.register({ isGlobal: true }), AppThrottlerModule, RelayModule],
+      imports: [
+        CacheModule.register({ isGlobal: true }),
+        AppThrottlerModule,
+        RelayModule,
+      ],
     })
       .overrideProvider(SorobanRpc.Server)
       .useValue(mockRpcServer)

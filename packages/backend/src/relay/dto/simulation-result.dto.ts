@@ -32,10 +32,16 @@ export class SimulationResultDto {
   @ApiProperty({ description: 'Function invoked' })
   function_called: string;
 
-  @ApiProperty({ type: [TokenTransferDto], description: 'Parsed token transfers' })
+  @ApiProperty({
+    type: [TokenTransferDto],
+    description: 'Parsed token transfers',
+  })
   token_transfers: TokenTransferDto[];
 
-  @ApiProperty({ type: PoolRatiosDto, description: 'New pool ratios after operation' })
+  @ApiProperty({
+    type: PoolRatiosDto,
+    description: 'New pool ratios after operation',
+  })
   new_pool_ratios: PoolRatiosDto;
 
   @ApiProperty({ description: 'Estimated payout if user wins' })
@@ -50,6 +56,9 @@ export class SimulationResultDto {
   @ApiProperty({ description: 'Whether the transaction simulation succeeded' })
   will_succeed: boolean;
 
-  @ApiProperty({ description: 'Human readable error message if simulation failed', nullable: true })
+  @ApiProperty({
+    description: 'Human readable error message if simulation failed',
+    nullable: true,
+  })
   error_message: string | null;
 }
